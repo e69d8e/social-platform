@@ -85,4 +85,11 @@ class SocialPlatformApplicationTests {
         simpMessagingTemplate.convertAndSendToUser("li", "/queue/msg", "点赞了你的帖子");
     }
 
+    // 清空Elasticsearch中的数据
+    @Test
+    void clearElasticsearchData() {
+        elasticsearchOperations.indexOps(Post.class).delete();
+        elasticsearchOperations.indexOps(Post.class).create();
+        elasticsearchOperations.indexOps(Post.class).putMapping();
+    }
 }

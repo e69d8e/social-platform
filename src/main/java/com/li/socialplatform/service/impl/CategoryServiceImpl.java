@@ -31,7 +31,7 @@ public class CategoryServiceImpl extends ServiceImpl<CategoryMapper, Category> i
         String key = KeyConstant.CATEGORY_LIST_KEY;
         Long size = redisTemplate.opsForList().size(key);
         if (size != null && size > 0) {
-            Result.ok(Objects.requireNonNull(redisTemplate.opsForList().range(key, 0, -1))
+            return Result.ok(Objects.requireNonNull(redisTemplate.opsForList().range(key, 0, -1))
                     .stream().map(item -> BeanUtil.copyProperties(item, Category.class)).toList());
         }
         // 如果缓存没有 则从数据库查 返回并加入缓存

@@ -17,7 +17,6 @@ import com.li.socialplatform.mapper.UserMapper;
 import com.li.socialplatform.pojo.dto.PostDTO;
 import com.li.socialplatform.pojo.entity.*;
 import com.li.socialplatform.pojo.vo.PostDetailVO;
-import com.li.socialplatform.pojo.vo.PostImageVO;
 import com.li.socialplatform.pojo.vo.PostVO;
 import com.li.socialplatform.service.IPostService;
 import lombok.RequiredArgsConstructor;
@@ -68,7 +67,7 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         Post post = new Post();
         post.setUserId(id);
         String title = postDTO.getTitle();
-        // 限制帖子标题字数
+        // 限制帖子标题长度
         if (title.length() > Integer.parseInt(systemConstants.titleMaxLength)) {
             return Result.error(MessageConstant.TITLE_TOO_LONG);
         }
@@ -77,6 +76,7 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         }
         post.setTitle(title);
         String content = postDTO.getContent();
+        // 限制帖子内容长度
         if (content.length() > Integer.parseInt(systemConstants.contentMaxLength)) {
             return Result.error(MessageConstant.CONTENT_TOO_LONG);
         }
@@ -84,15 +84,10 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
             return Result.error(MessageConstant.CONTENT_IS_NULL);
         }
         post.setContent(content);
+        post.setCover(postDTO.getCover());
         post.setCategoryId(postDTO.getCategoryId() == null ? 1 : postDTO.getCategoryId());
         postMapper.insert(post);
         log.info("用户 {} 发表了帖子 {}", id, post.getId());
-        // 添加帖子图片
-        if (postDTO.getImages() != null && !postDTO.getImages().isEmpty()) {
-            for (String image : postDTO.getImages()) {
-                postImageMapper.insert(new PostImage(null, post.getId(), image));
-            }
-        }
         long time = System.currentTimeMillis();
         // 将帖子添加到缓存中
         redisTemplate.opsForZSet().add(KeyConstant.POST_LIST_KEY, post.getId(), time);
@@ -129,19 +124,17 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         if (user == null) {
             return Result.error(MessageConstant.USER_NOT_FOUND);
         }
-        List<PostImage> postImages = postImageMapper.selectList(
-                new LambdaQueryWrapper<PostImage>().eq(PostImage::getPostId, id));
         // 查询是否点过赞
         Long userId = userIdUtil.getUserId();
         PostDetailVO postDetailVO = BeanUtil.copyProperties(post, PostDetailVO.class);
         postDetailVO.setCategory(categoryMapper.selectById(post.getCategoryId()).getName());
-        postDetailVO.setPostImages(postImagesToPostImagesVOs(postImages));
         postDetailVO.setLiked(
                 userId != null && Boolean.TRUE.equals(redisTemplate.opsForSet().isMember(KeyConstant.LIKE_KEY + id, userId)));
         Integer count = (Integer) redisTemplate.opsForValue().get(KeyConstant.LIKE_COUNT + id);
         postDetailVO.setCount(count == null ? 0 : count);
         postDetailVO.setAvatar(user.getAvatar());
         postDetailVO.setNickname(user.getNickname());
+        postDetailVO.setCover(post.getCover());
         if (userId == null) {
             postDetailVO.setFollowed(false);
         } else {
@@ -182,13 +175,9 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         List<PostVO> postVOS = new ArrayList<>();
         Long userId = userIdUtil.getUserId();
         for (Post record : records) {
-            List<PostImage> postImages = postImageMapper.selectList(
-                    new LambdaQueryWrapper<PostImage>().eq(PostImage::getPostId, record.getId()));
             PostVO postVO = BeanUtil.copyProperties(record, PostVO.class);
             Integer count = (Integer) redisTemplate.opsForValue().get(KeyConstant.LIKE_COUNT + record.getId());
             postVO.setCount(count == null ? 0 : count);
-            postVO.setImgUrl(getImgUrl(postImages));
-            postVO.setPostImages(postImagesToPostImagesVOs(postImages));
             if (userId == null) {
                 postVO.setLiked(false);
             } else {
@@ -260,11 +249,7 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
             if (!post.getEnabled()) {
                 continue;
             }
-            List<PostImage> postImages = postImageMapper.selectList(
-                    new LambdaQueryWrapper<PostImage>().eq(PostImage::getPostId, id));
             PostVO postVO = BeanUtil.copyProperties(post, PostVO.class);
-            postVO.setPostImages(postImagesToPostImagesVOs(postImages));
-            postVO.setImgUrl(getImgUrl(postImages));
             Integer count = (Integer) redisTemplate.opsForValue().get(KeyConstant.LIKE_COUNT + id);
             postVO.setCount(count == null ? 0 : count);
             if (userId == null) {
@@ -289,20 +274,5 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         postVOScrollResult.setOffset(nweOffset);
         postVOScrollResult.setMinTime(scores.getLast().longValue());
         return postVOScrollResult;
-    }
-
-    private List<PostImageVO> postImagesToPostImagesVOs(List<PostImage> postImages) {
-        List<PostImageVO> postImageVOS = new ArrayList<>();
-        for (PostImage postImage : postImages) {
-            postImageVOS.add(BeanUtil.copyProperties(postImage, PostImageVO.class));
-        }
-        return postImageVOS;
-    }
-
-    private String getImgUrl(List<PostImage> postImages) {
-        if (postImages == null || postImages.isEmpty()) {
-            return systemConstants.defaultPostImg;
-        }
-        return postImages.getFirst().getUrl();
     }
 }

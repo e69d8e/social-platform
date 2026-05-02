@@ -28,6 +28,10 @@ public class Post implements Serializable {
     @TableField("user_id")
     private Long userId;
 
+    @Field(type = FieldType.Keyword)
+    @TableField("cover")
+    private String cover;
+
     @Field(type = FieldType.Text, analyzer = "ik_smart")
     @TableField("title")
     private String title;

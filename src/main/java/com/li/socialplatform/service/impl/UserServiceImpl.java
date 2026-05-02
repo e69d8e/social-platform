@@ -7,15 +7,11 @@ import com.li.socialplatform.common.constant.KeyConstant;
 import com.li.socialplatform.common.constant.MessageConstant;
 import com.li.socialplatform.common.properties.SystemConstants;
 import com.li.socialplatform.common.utils.UserIdUtil;
-import com.li.socialplatform.mapper.AuthorityMapper;
-import com.li.socialplatform.mapper.PostImageMapper;
 import com.li.socialplatform.mapper.UserMapper;
 import com.li.socialplatform.pojo.dto.UserDTO;
 import com.li.socialplatform.pojo.entity.Post;
-import com.li.socialplatform.pojo.entity.PostImage;
 import com.li.socialplatform.pojo.entity.Result;
 import com.li.socialplatform.pojo.entity.User;
-import com.li.socialplatform.pojo.vo.PostImageVO;
 import com.li.socialplatform.pojo.vo.PostVO;
 import com.li.socialplatform.pojo.vo.UserVO;
 import com.li.socialplatform.service.IUserService;
@@ -55,9 +51,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
     private final UserMapper userMapper;
     private final SystemConstants systemConstants;
-    private final AuthorityMapper authorityMapper;
     private final RedisTemplate<String, Object> redisTemplate;
-    private final PostImageMapper postImageMapper;
     private final UserIdUtil userIdUtil;
     private final ElasticsearchOperations elasticsearchOperations;
 
@@ -136,7 +130,6 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         UserVO userVO = BeanUtil.copyProperties(user, UserVO.class);
         Integer count = (Integer) redisTemplate.opsForValue().get(KeyConstant.FOLLOW_COUNT_KEY + id);
         userVO.setCount(count == null ? 0 : count);
-        userVO.setAuthority(authorityMapper.selectById(user.getAuthorityId()).getAuthority());
         userVO.setFollowed(followed);
         return Result.ok(userVO);
     }
@@ -244,10 +237,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         List<PostVO> postVOS = new ArrayList<>();
         Long userId = userIdUtil.getUserId();
         for (Post post : posts) {
-            List<PostImage> postImages = postImageMapper.selectList(new LambdaQueryWrapper<PostImage>().eq(PostImage::getPostId, post.getId()));
             PostVO postVO = BeanUtil.copyProperties(post, PostVO.class);
-            postVO.setImgUrl(getImgUrl(postImages));
-            postVO.setPostImages(postImagesToPostImagesVOs(postImages));
             if (userId == null) {
                 postVO.setLiked(false);
             } else {
@@ -312,7 +302,6 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         List<UserVO> userVOS = new ArrayList<>();
         for (User user : users) {
             UserVO userVO = BeanUtil.copyProperties(user, UserVO.class);
-            userVO.setAuthority(authorityMapper.selectById(user.getAuthorityId()).getAuthority());
             Double score = redisTemplate.opsForZSet().score(KeyConstant.Follow_LIST_KEY + userIdUtil.getUserId(), user.getId());
             userVO.setFollowed(score != null);
             Integer count = (Integer) redisTemplate.opsForValue().get(KeyConstant.FOLLOW_COUNT_KEY + user.getId());
@@ -339,21 +328,5 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 //            users.add(userVO);
 //        }
 //        return Result.ok(users, userIPage.getTotal());
-    }
-
-
-    private List<PostImageVO> postImagesToPostImagesVOs(List<PostImage> postImages) {
-        List<PostImageVO> postImageVOS = new ArrayList<>();
-        for (PostImage postImage : postImages) {
-            postImageVOS.add(BeanUtil.copyProperties(postImage, PostImageVO.class));
-        }
-        return postImageVOS;
-    }
-
-    private String getImgUrl(List<PostImage> postImages) {
-        if (postImages == null || postImages.isEmpty()) {
-            return systemConstants.defaultPostImg;
-        }
-        return postImages.getFirst().getUrl();
     }
 }

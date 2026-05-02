@@ -7,7 +7,6 @@ import lombok.NoArgsConstructor;
 
 import java.io.Serializable;
 import java.time.LocalDateTime;
-import java.util.List;
 
 /**
  * @author e69d8e
@@ -19,12 +18,12 @@ import java.util.List;
 public class PostDetailVO implements Serializable {
     @JsonFormat(shape = JsonFormat.Shape.STRING)
     private Long id;
+    private String cover;
     private String title;
     private String content;
     private String category;
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime createTime;
-    private List<PostImageVO> postImages;
     private Boolean liked;
     private Integer count;
     @JsonFormat(shape = JsonFormat.Shape.STRING)

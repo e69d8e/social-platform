@@ -5,7 +5,6 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.io.Serializable;
-import java.util.List;
 
 /**
  * @author e69d8e
@@ -15,8 +14,8 @@ import java.util.List;
 @AllArgsConstructor
 @NoArgsConstructor
 public class PostDTO implements Serializable {
-    private String content;
+    private String cover;
     private String title;
+    private String content;
     private Integer categoryId;
-    private List<String> images;
 }

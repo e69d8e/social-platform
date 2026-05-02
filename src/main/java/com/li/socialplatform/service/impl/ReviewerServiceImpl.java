@@ -1,18 +1,13 @@
 package com.li.socialplatform.service.impl;
 
 import cn.hutool.core.bean.BeanUtil;
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.li.socialplatform.common.constant.KeyConstant;
 import com.li.socialplatform.common.constant.MessageConstant;
-import com.li.socialplatform.common.properties.SystemConstants;
 import com.li.socialplatform.common.utils.UserIdUtil;
 import com.li.socialplatform.mapper.CommentMapper;
-import com.li.socialplatform.mapper.PostImageMapper;
 import com.li.socialplatform.mapper.PostMapper;
 import com.li.socialplatform.pojo.entity.Post;
-import com.li.socialplatform.pojo.entity.PostImage;
 import com.li.socialplatform.pojo.entity.Result;
-import com.li.socialplatform.pojo.vo.PostImageVO;
 import com.li.socialplatform.pojo.vo.PostVO;
 import com.li.socialplatform.service.IReviewerService;
 import lombok.RequiredArgsConstructor;
@@ -33,8 +28,6 @@ public class ReviewerServiceImpl implements IReviewerService {
 
     private final PostMapper postMapper;
     private final RedisTemplate<String, Object> redisTemplate;
-    private final PostImageMapper postImageMapper;
-    private final SystemConstants systemConstants;
     private final UserIdUtil userIdUtil;
     private final CommentMapper commentMapper;
 
@@ -79,9 +72,6 @@ public class ReviewerServiceImpl implements IReviewerService {
         for (Long id : ids) {
             Post post = postMapper.selectById(id);
             PostVO postVO = BeanUtil.copyProperties(post, PostVO.class);
-            List<PostImage> postImages = postImageMapper.selectList(new LambdaQueryWrapper<PostImage>().eq(PostImage::getPostId, id));
-            postVO.setImgUrl(getImgUrl(postImages));
-            postVO.setPostImages(postImagesToPostImagesVOs(postImages));
             postVO.setCount((Integer) redisTemplate.opsForValue().get(KeyConstant.LIKE_COUNT + id));
             if (userId != null) {
                 postVO.setLiked(redisTemplate.opsForSet().isMember(KeyConstant.LIKE_KEY + id, userId));
@@ -99,21 +89,6 @@ public class ReviewerServiceImpl implements IReviewerService {
         redisTemplate.opsForZSet().remove(KeyConstant.COMMENT_KEY + postId, id);
         commentMapper.deleteById(id);
         return Result.ok(MessageConstant.DELETE_SUCCESS, "");
-    }
-
-    private List<PostImageVO> postImagesToPostImagesVOs(List<PostImage> postImages) {
-        List<PostImageVO> postImageVOS = new ArrayList<>();
-        for (PostImage postImage : postImages) {
-            postImageVOS.add(BeanUtil.copyProperties(postImage, PostImageVO.class));
-        }
-        return postImageVOS;
-    }
-
-    private String getImgUrl(List<PostImage> postImages) {
-        if (postImages == null || postImages.isEmpty()) {
-            return systemConstants.defaultPostImg;
-        }
-        return postImages.getFirst().getUrl();
     }
 
 }

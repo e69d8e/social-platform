@@ -22,6 +22,11 @@ spring:
       database: 1
   elasticsearch:
     uris: http://127.0.0.1:9200
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 10MB  # 文件上传最大限制
+      max-request-size: 10MB # 请求上传最大限制
 server:
 #  servlet:
 #    context-path: /api
@@ -43,7 +48,7 @@ social-platform:
     max-page-size: 1
     default-post-img: "http://127.0.0.1:8080/imgs/post/default.jpg"
     default-avatar: "http://127.0.0.1:8080/imgs/avatar/default.jpg"
-    title-max-length: 50
-    content-max-length: 6000
+    title-max-length: 100
+    content-max-length: 12000
     nickname-max-length: 16
-    bio-max-length: 50
+    bio-max-length: 2000

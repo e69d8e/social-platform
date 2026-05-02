@@ -6,7 +6,6 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.li.socialplatform.common.constant.KeyConstant;
 import com.li.socialplatform.common.constant.MessageConstant;
 import com.li.socialplatform.common.utils.UserIdUtil;
-import com.li.socialplatform.mapper.AuthorityMapper;
 import com.li.socialplatform.mapper.FollowMapper;
 import com.li.socialplatform.mapper.UserMapper;
 import com.li.socialplatform.pojo.entity.Follow;
@@ -35,7 +34,6 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
     private final FollowMapper followMapper;
     private final RedisTemplate<String, Object> redisTemplate;
     private final UserMapper userMapper;
-    private final AuthorityMapper authorityMapper;
     private final UserIdUtil userIdUtil;
     private final ElasticsearchOperations elasticsearchOperations;
 
@@ -176,7 +174,6 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
         List<User> users = userMapper.selectByIds(ids);
         List<UserVO> userVOs = users.stream().map(user -> {
             UserVO userVO = BeanUtil.copyProperties(user, UserVO.class);
-            userVO.setAuthority(authorityMapper.selectById(user.getAuthorityId()).getAuthority());
             Integer count = (Integer) redisTemplate.opsForValue().get(KeyConstant.FOLLOW_COUNT_KEY + user.getId());
             userVO.setCount(count == null ? 0 : count);
             if (userId != null) {
@@ -227,7 +224,6 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
             userVO.setFollowed(true);
             Integer count = (Integer) redisTemplate.opsForValue().get(KeyConstant.FOLLOW_COUNT_KEY + user.getId());
             userVO.setCount(count == null ? 0 : count);
-            userVO.setAuthority(authorityMapper.selectById(user.getAuthorityId()).getAuthority());
             userVOs.add(userVO);
         }
         return Result.ok(userVOs, total);
@@ -256,7 +252,6 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
             userVO.setFollowed(true);
             Integer count = (Integer) redisTemplate.opsForValue().get(KeyConstant.FOLLOW_COUNT_KEY + user.getId());
             userVO.setCount(count == null ? 0 : count);
-            userVO.setAuthority(authorityMapper.selectById(user.getAuthorityId()).getAuthority());
             userVOs.add(userVO);
         }
         return Result.ok(userVOs, total);

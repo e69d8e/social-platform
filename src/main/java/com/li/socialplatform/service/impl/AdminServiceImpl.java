@@ -5,7 +5,6 @@ import com.li.socialplatform.common.constant.AuthorityConstant;
 import com.li.socialplatform.common.constant.KeyConstant;
 import com.li.socialplatform.common.constant.MessageConstant;
 import com.li.socialplatform.common.utils.UserIdUtil;
-import com.li.socialplatform.mapper.AuthorityMapper;
 import com.li.socialplatform.mapper.UserMapper;
 import com.li.socialplatform.pojo.entity.Result;
 import com.li.socialplatform.pojo.entity.User;
@@ -30,7 +29,6 @@ public class AdminServiceImpl implements IAdminService {
 
     private final UserMapper userMapper;
     private final RedisTemplate<String, Object> redisTemplate;
-    private final AuthorityMapper authorityMapper;
     private final UserIdUtil userIdUtil;
 
     @Override
@@ -72,7 +70,6 @@ public class AdminServiceImpl implements IAdminService {
             User user = userMapper.selectById(id);
             UserVO userVO = BeanUtil.copyProperties(user, UserVO.class);
             userVO.setEnabled(false);
-            userVO.setAuthority(authorityMapper.selectById(user.getAuthorityId()).getAuthority());
             Double score = redisTemplate.opsForZSet().score(KeyConstant.Follow_LIST_KEY + userIdUtil.getUserId(), id);
             userVO.setFollowed(score != null);
             Integer count = (Integer) redisTemplate.opsForValue().get(KeyConstant.FOLLOW_COUNT_KEY + user.getId());

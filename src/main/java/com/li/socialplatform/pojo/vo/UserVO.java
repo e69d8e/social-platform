@@ -22,7 +22,7 @@ public class UserVO implements Serializable {
     private String avatar;
     private String bio;
     private Integer gender;
-    private String authority;
+    private Integer authorityId;
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime createTime;
     private String nickname;
