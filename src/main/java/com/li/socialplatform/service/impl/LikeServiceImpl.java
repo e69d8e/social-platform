@@ -19,6 +19,7 @@ import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * @author e69d8e
@@ -27,6 +28,7 @@ import org.springframework.stereotype.Service;
 @Service
 @RequiredArgsConstructor
 @Slf4j
+@Transactional
 public class LikeServiceImpl extends ServiceImpl<LikeMapper, LikeRecord> implements ILikeService {
 
     private final LikeMapper likeMapper;
@@ -58,7 +60,7 @@ public class LikeServiceImpl extends ServiceImpl<LikeMapper, LikeRecord> impleme
         } else {
             // 点赞数+1
             Long increment = redisTemplate.opsForValue().increment(KeyConstant.LIKE_COUNT + postId, 1);
-            likeMapper.delete(new LambdaQueryWrapper<LikeRecord>().eq(LikeRecord::getPostId, postId).eq(LikeRecord::getUserId, userId));
+            likeMapper.insert(new LikeRecord(null, postId, userId, null));
             redisTemplate.opsForSet().add(key, userId);
             // 更新 Elasticsearch
             Post post = elasticsearchOperations.get(postId.toString(), Post.class);

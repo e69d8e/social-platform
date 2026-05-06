@@ -95,16 +95,16 @@ CREATE TABLE if not exists `post` (
                                       KEY `idx_user_time` (`user_id`, `create_time` DESC)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='帖子表';
 
-drop table if exists `post_image`;
-# 帖子图片表
-CREATE TABLE if not exists `post_image` (
-                                            `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '图片记录ID',
-                                            `post_id` BIGINT NOT NULL COMMENT '帖子ID',
-                                            `url` VARCHAR(255) NOT NULL COMMENT '图片URL地址',
-                                            PRIMARY KEY (`id`),
-#     FOREIGN KEY (`post_id`) REFERENCES `post` (`id`),
-                                            KEY `idx_post_id` (`post_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='帖子图片表';
+# drop table if exists `post_image`;
+# # 帖子图片表
+# CREATE TABLE if not exists `post_image` (
+#                                             `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '图片记录ID',
+#                                             `post_id` BIGINT NOT NULL COMMENT '帖子ID',
+#                                             `url` VARCHAR(255) NOT NULL COMMENT '图片URL地址',
+#                                             PRIMARY KEY (`id`),
+# #     FOREIGN KEY (`post_id`) REFERENCES `post` (`id`),
+#                                             KEY `idx_post_id` (`post_id`)
+# ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='帖子图片表';
 
 drop table if exists `comment`;
 # 评论表
@@ -139,18 +139,18 @@ CREATE TABLE if not exists `like_record` (
                                              KEY `idx_user_id` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='点赞记录表';
 
-drop table if exists `notification`;
-# 通知表
-CREATE TABLE `notification` (
-                                `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '通知ID',
-                                `user_id` BIGINT NOT NULL COMMENT '接收方用户ID',
-                                `from_user` BIGINT NULL COMMENT '触发者用户ID',
-                                `type` TINYINT NOT NULL COMMENT '通知类型 (1: Like, 2: Comment, 3: Follow)',
-                                `ref_id` BIGINT NULL COMMENT '关联实体ID (帖子ID或评论ID)',
-                                `read_flag` TINYINT DEFAULT 0 COMMENT '是否已读 (0: 未读, 1: 已读)',
-                                `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '通知时间',
-                                PRIMARY KEY (`id`),
-#     FOREIGN KEY (`user_id`) REFERENCES `user` (`id`),
-#     FOREIGN KEY (`from_user`) REFERENCES `user` (`id`),
-                                KEY `idx_user_read` (`user_id`, `read_flag`, `create_time` DESC)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='通知表';
+# drop table if exists `notification`;
+# # 通知表
+# CREATE TABLE `notification` (
+#                                 `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '通知ID',
+#                                 `user_id` BIGINT NOT NULL COMMENT '接收方用户ID',
+#                                 `from_user` BIGINT NULL COMMENT '触发者用户ID',
+#                                 `type` TINYINT NOT NULL COMMENT '通知类型 (1: Like, 2: Comment, 3: Follow)',
+#                                 `ref_id` BIGINT NULL COMMENT '关联实体ID (帖子ID或评论ID)',
+#                                 `read_flag` TINYINT DEFAULT 0 COMMENT '是否已读 (0: 未读, 1: 已读)',
+#                                 `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '通知时间',
+#                                 PRIMARY KEY (`id`),
+# #     FOREIGN KEY (`user_id`) REFERENCES `user` (`id`),
+# #     FOREIGN KEY (`from_user`) REFERENCES `user` (`id`),
+#                                 KEY `idx_user_read` (`user_id`, `read_flag`, `create_time` DESC)
+# ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='通知表';
