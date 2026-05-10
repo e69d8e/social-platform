@@ -1,8 +1,11 @@
 package com.li.socialplatform.server.controller;
 
+import com.li.socialplatform.pojo.dto.LoginDTO;
+import com.li.socialplatform.pojo.dto.RefreshDTO;
 import com.li.socialplatform.pojo.dto.UserDTO;
 import com.li.socialplatform.pojo.entity.Result;
 import com.li.socialplatform.server.service.IUserService;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
@@ -16,6 +19,21 @@ import org.springframework.web.bind.annotation.*;
 public class UserController {
 
     private final IUserService userService;
+
+    @PostMapping("/login")
+    public Result login(@RequestBody LoginDTO loginDTO) {
+        return userService.login(loginDTO);
+    }
+
+    @PostMapping("/refresh")
+    public Result refresh(@RequestBody RefreshDTO refreshDTO) {
+        return userService.refresh(refreshDTO);
+    }
+
+    @PostMapping("/logout")
+    public Result logout(HttpServletRequest request) {
+        return userService.logout(request);
+    }
 
     // 注册
     @PostMapping("/register")
@@ -63,9 +81,10 @@ public class UserController {
     @GetMapping("/list/post")
     public Result listPost(@RequestParam(defaultValue = "") String keyword,
                            @RequestParam(defaultValue = "1") Integer pageNum,
-                           @RequestParam(defaultValue = "8") Integer pageSize
+                           @RequestParam(defaultValue = "8") Integer pageSize,
+                           @RequestParam(required = false) Integer categoryId
     ) {
-        return userService.listPost(keyword, pageNum, pageSize);
+        return userService.listPost(keyword, pageNum, pageSize, categoryId);
     }
 
     // 用户搜索用户
