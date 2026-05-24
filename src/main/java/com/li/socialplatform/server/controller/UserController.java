@@ -4,6 +4,7 @@ import com.li.socialplatform.pojo.dto.LoginDTO;
 import com.li.socialplatform.pojo.dto.RefreshDTO;
 import com.li.socialplatform.pojo.dto.UserDTO;
 import com.li.socialplatform.pojo.entity.Result;
+import com.li.socialplatform.server.service.ISearchHistoryService;
 import com.li.socialplatform.server.service.IUserService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
@@ -19,6 +20,7 @@ import org.springframework.web.bind.annotation.*;
 public class UserController {
 
     private final IUserService userService;
+    private final ISearchHistoryService searchHistoryService;
 
     @PostMapping("/login")
     public Result login(@RequestBody LoginDTO loginDTO) {
@@ -93,6 +95,25 @@ public class UserController {
                            @RequestParam(defaultValue = "1") Integer pageNum,
                            @RequestParam(defaultValue = "12") Integer pageSize
     ) {
-        return userService.listUser(keyword, pageNum, pageSize);
+    return userService.listUser(keyword, pageNum, pageSize);
+    }
+
+    // 获取搜索记录
+    @GetMapping("/search-history")
+    public Result getSearchRecords(@RequestParam(defaultValue = "1") Integer pageNum,
+                                   @RequestParam(defaultValue = "20") Integer pageSize) {
+        return searchHistoryService.getSearchRecords(pageNum, pageSize);
+    }
+
+    // 删除指定搜索记录
+    @DeleteMapping("/search-history/{id}")
+    public Result deleteSearchRecord(@PathVariable Long id) {
+        return searchHistoryService.deleteSearchRecord(id);
+    }
+
+    // 一键清空搜索记录
+    @DeleteMapping("/search-history")
+    public Result clearSearchRecords() {
+        return searchHistoryService.clearSearchRecords();
     }
 }

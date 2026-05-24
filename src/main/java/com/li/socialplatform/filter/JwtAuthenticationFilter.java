@@ -41,7 +41,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final UserMapper userMapper;
     private final AuthorityMapper authorityMapper;
     private final RedisTemplate<String, Object> redisTemplate;
-    // ... existing code ...
+
     @Override
     protected void doFilterInternal(HttpServletRequest request,
                                     @NotNull HttpServletResponse response,
@@ -58,6 +58,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 String jti = claims.getId();
                 if (jti != null && redisTemplate.hasKey(KeyConstant.TOKEN_BLACKLIST_KEY + jti)) {
                     log.debug("Token 已被注销, 用户名: {}", username);
+                    request.setAttribute("TOKEN_BLACKLISTED", true);
                     chain.doFilter(request, response);
                     return;
                 }
@@ -77,9 +78,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     }
                 }
             } catch (JwtException e) {
-                logger.warn("JWT token 无效或已过期: " + e.getMessage());
-            } catch (Exception e) {
-                logger.error("处理 JWT token 时发生错误: " + e.getMessage());
+                log.debug("Token 解析失败，放行请求: {}", e.getMessage());
             }
         }
         chain.doFilter(request, response);

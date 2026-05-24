@@ -12,4 +12,5 @@ import java.util.List;
  */
 public interface UserElasticsearchRepository extends ElasticsearchRepository<User, Long> {
     List<User> findByUsernameOrNickname(String username, String nickname, Pageable pageable);
+    long countByUsernameOrNickname(String username, String nickname);
 }

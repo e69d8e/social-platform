@@ -48,7 +48,7 @@ public class LikeServiceImpl extends ServiceImpl<LikeMapper, LikeRecord> impleme
             redisTemplate.opsForSet().remove(key, userId);
             asyncTaskUtil.asyncDeleteLikeRecord(postId, userId);
             if (post != null) {
-                userIntersetScoreUtil.changeScore(userId, post.getCategoryId(), -2);
+                userIntersetScoreUtil.changeScore(userId, post.getCategoryId(), -10);
             }
         } else {
             // 点赞数+1
@@ -56,7 +56,7 @@ public class LikeServiceImpl extends ServiceImpl<LikeMapper, LikeRecord> impleme
             redisTemplate.opsForSet().add(key, userId);
             asyncTaskUtil.asyncInsertLikeRecord(postId, userId);
             if (post != null) {
-                userIntersetScoreUtil.changeScore(userId, post.getCategoryId(), 2);
+                userIntersetScoreUtil.changeScore(userId, post.getCategoryId(), 10);
             }
         }
         // 续期 TTL

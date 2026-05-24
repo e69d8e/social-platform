@@ -69,7 +69,7 @@ public class CommentServiceImpl extends ServiceImpl<CommentMapper, Comment> impl
         }
         // 用户兴趣+1
         Post post = postMapper.selectById(comment.getPostId());
-        userIntersetScoreUtil.changeScore(userId, post.getCategoryId(), 2);
+        userIntersetScoreUtil.changeScore(userId, post.getCategoryId(), 5);
         return Result.ok(MessageConstant.ADD_COMMENT_SUCCESS, "");
     }
 

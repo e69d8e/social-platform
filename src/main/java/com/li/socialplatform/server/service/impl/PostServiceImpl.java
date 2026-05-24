@@ -20,6 +20,8 @@ import com.li.socialplatform.server.repository.PostElasticsearchRepository;
 import com.li.socialplatform.server.service.IPostService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import co.elastic.clients.elasticsearch._types.Time;
+import co.elastic.clients.elasticsearch._types.query_dsl.FunctionBoostMode;
 import co.elastic.clients.elasticsearch._types.query_dsl.Query;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -196,18 +198,32 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         int maxScore = interestScores.values().stream().mapToInt(Integer::intValue).max().orElse(1);
 
         NativeQuery nativeQuery = NativeQuery.builder()
-                .withQuery(Query.of(q -> q.bool(b -> {
-                    b.must(m -> m.term(t -> t.field("enabled").value(true)));
-                    for (Map.Entry<Integer, Integer> entry : interestScores.entrySet()) {
-                        if (entry.getValue() > 0) {
-                            float boost = (float) entry.getValue() / maxScore;
-                            b.should(s -> s.term(t -> t.field("categoryId").value(entry.getKey()).boost(boost)));
+                .withQuery(Query.of(q -> q.functionScore(fs -> {
+                    fs.query(fq -> fq.bool(b -> {
+                        b.must(m -> m.term(t -> t.field("enabled").value(true)));
+                        for (Map.Entry<Integer, Integer> entry : interestScores.entrySet()) {
+                            if (entry.getValue() > 0) {
+                                float boost = (float) entry.getValue() / maxScore;
+                                b.should(s -> s.term(t -> t.field("categoryId").value(entry.getKey()).boost(boost)));
+                            }
                         }
-                    }
-                    b.minimumShouldMatch("0");
-                    return b;
+                        b.minimumShouldMatch("0");
+                        return b;
+                    }));
+                    fs.functions(f -> f.gauss(g -> g
+                            .date(d -> d
+                                    .field("createTime")
+                                    .placement(p -> p
+                                            .origin("now")
+                                            .scale(Time.of(t -> t.time("7d")))
+                                            .decay(0.5)
+                                    )
+                            )
+                    ));
+                    fs.boostMode(FunctionBoostMode.Multiply);
+                    return fs;
                 })))
-                .withSort(Sort.by(Sort.Direction.DESC, "createTime"))
+                .withSort(Sort.by(Sort.Order.desc("_score")))
                 .withPageable(PageRequest.of(offset / pageSize, pageSize))
                 .build();
 

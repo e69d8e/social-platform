@@ -186,6 +186,18 @@ CREATE TABLE `file`(
                        INDEX idx_post_id (post_id)
 )ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文件表';
 
+DROP TABLE IF EXISTS `search_history`;
+
+CREATE TABLE `search_history` (
+    `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '搜索记录ID',
+    `user_id` BIGINT NOT NULL COMMENT '用户ID',
+    `keyword` VARCHAR(255) NOT NULL COMMENT '搜索关键词',
+    `type` TINYINT NOT NULL COMMENT '搜索类型 (0: 帖子搜索, 1: 用户搜索)',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '搜索时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_user_id` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户搜索记录表';
+
 # drop table if exists `notification`;
 # # 通知表
 # CREATE TABLE `notification` (

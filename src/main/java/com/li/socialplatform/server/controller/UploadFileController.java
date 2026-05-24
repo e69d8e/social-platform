@@ -86,6 +86,18 @@ public class UploadFileController {
             if (existingFile != null) {
                 return Result.ok(systemConstants.baseUrl + existingFile.getUrl());
             }
+            com.li.socialplatform.pojo.entity.File file = fileMapper.selectOne(
+                    new LambdaQueryWrapper<com.li.socialplatform.pojo.entity.File>()
+                            .eq(com.li.socialplatform.pojo.entity.File::getHash, sha256Hash));
+            if (file != null) {
+                // 插入数据库
+                file.setPostId(postId);
+                file.setUserId(userId);
+                file.setId(null);
+                fileMapper.insert(file);
+                return Result.ok(systemConstants.baseUrl + file.getUrl());
+            }
+
 
             String fileUrl = createNewFileName(originalFilename, sha256Hash);
 

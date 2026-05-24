@@ -24,6 +24,7 @@ import com.li.socialplatform.pojo.entity.Result;
 import com.li.socialplatform.pojo.entity.User;
 import com.li.socialplatform.pojo.vo.PostVO;
 import com.li.socialplatform.pojo.vo.UserVO;
+import com.li.socialplatform.server.service.ISearchHistoryService;
 import com.li.socialplatform.server.service.IUserService;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.ExpiredJwtException;
@@ -40,6 +41,7 @@ import org.springframework.data.redis.connection.BitFieldSubCommands;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.DisabledException;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
@@ -78,6 +80,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
     private final DeleteFileUtil deleteFileUtil;
     private final FileMapper fileMapper;
     private final DataCacheUtil dataCacheUtil;
+    private final ISearchHistoryService searchHistoryService;
 
     @Value("${jwt.access-expire}")
     private Long accessExpire;
@@ -101,32 +104,21 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
     @Override
     public Result login(LoginDTO loginDTO) {
-        // 判断账号是否存在
-        User user = userMapper.selectOne(new LambdaQueryWrapper<User>().eq(User::getUsername, loginDTO.getUsername()));
-        if (user == null) {
-            return Result.error(MessageConstant.USER_NOT_EXIST);
-        }
-        if (!user.getEnabled()) {
-            return Result.error(MessageConstant.USER_NOT_ENABLED);
-        }
-        // 1. 创建未认证的 UsernamePasswordAuthenticationToken
         UsernamePasswordAuthenticationToken authToken =
                 new UsernamePasswordAuthenticationToken(loginDTO.getUsername(), loginDTO.getPassword());
 
-        // 2. 调用 AuthenticationManager 进行认证（会触发 UserDetailsService 和 PasswordEncoder）
         Authentication authentication;
         try {
             authentication = authenticationManager.authenticate(authToken);
+        } catch (DisabledException e) {
+            return Result.error(MessageConstant.USER_NOT_ENABLED);
         } catch (AuthenticationException e) {
             return Result.error(MessageConstant.USER_PASSWORD_ERROR);
         }
 
-        // 3. 认证成功后，从 Authentication 对象中获取用户信息
-        //    getPrincipal() 返回的是 UserDetails 对象（即之前自定义的 SecurityUser 实例）
         UserDetails authenticatedUser = (UserDetails) authentication.getPrincipal();
         String username = authenticatedUser.getUsername();
 
-        // 4. 生成 token 并存储 refreshToken 到 Redis
         String accessToken = jwtUtils.generateToken(username, accessExpire);
         String refreshToken = jwtUtils.generateToken(username, refreshExpire);
         redisTemplate.opsForValue().set(KeyConstant.REFRESH_KEY + username, refreshToken, refreshExpire, TimeUnit.MILLISECONDS);
@@ -138,22 +130,22 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
     public Result refresh(RefreshDTO refreshDTO, HttpServletRequest request) {
         String refreshToken = refreshDTO.getRefreshToken();
         if (StringUtils.isEmpty(refreshToken)) {
-            throw new RuntimeException("refresh token is empty");
+            return Result.error("refresh token 不能为空");
         }
         // 1. 解析 refreshToken 获取用户名
         Claims claims;
         try {
             claims = jwtUtils.parseToken(refreshToken);
         } catch (ExpiredJwtException e) {
-            throw new RuntimeException("refresh token 过期，请重新登录");
+            return Result.error("refresh token 已过期，请重新登录");
         } catch (JwtException e) {
-            throw new RuntimeException("无效的 refresh token");
+            return Result.error("无效的 refresh token");
         }
         String username = claims.getSubject();
         // 2. 从 Redis 中获取保存的 refreshToken 并比对
         String storedRefreshToken = (String) redisTemplate.opsForValue().get(KeyConstant.REFRESH_KEY + username);
         if (!refreshToken.equals(storedRefreshToken)) {
-            throw new RuntimeException("refresh token 不匹配");
+            return Result.error("refresh token 不匹配或已失效");
         }
         // 3. 将旧 access token 加入黑名单
         blacklistAccessToken(request);
@@ -375,6 +367,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
                 total = postElasticsearchRepository.countByTitleOrContentAndCategoryId(keyword, keyword, categoryId);
             }
         }
+        if (!StringUtils.isEmpty(keyword)) {
+            searchHistoryService.recordSearch(keyword, 0);
+        }
         if (posts.isEmpty()) {
             return Result.ok(List.of(), 0L);
         }
@@ -434,7 +429,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         Sort sort = Sort.by(Sort.Direction.DESC, "fansCount");
         Pageable pageable = PageRequest.of(pageNum - 1, pageSize, sort);
         List<User> users = userElasticsearchRepository.findByUsernameOrNickname(keyword, keyword, pageable);
-        long total = userElasticsearchRepository.count();
+        long total = userElasticsearchRepository.countByUsernameOrNickname(keyword, keyword);
+        if (!StringUtils.isEmpty(keyword)) {
+            searchHistoryService.recordSearch(keyword, 1);
+        }
         if (users.isEmpty()) {
             return Result.ok(List.of(), 0L);
         }
