@@ -48,4 +48,12 @@ public class MessageConstant {
     public static final String USER_LOGOUT_SUCCESS = "注销成功";
     public static final String USER_NOT_ENABLED = "用户被封禁";
     public static final String SESSION_NOT_EXIST = "会话不存在";
+
+    // 私信
+    public static final String RECEIVER_NOT_EXIST = "接收方用户不存在";
+    public static final String CANNOT_MESSAGE_SELF = "不能给自己发送私信";
+    public static final String MESSAGE_CONTENT_EMPTY = "消息内容不能为空";
+    public static final String CONVERSATION_NOT_EXIST = "会话不存在";
+    public static final String NOT_CONVERSATION_PARTICIPANT = "您不是该会话的参与者";
+    public static final String MESSAGE_SEND_SUCCESS = "消息发送成功";
 }

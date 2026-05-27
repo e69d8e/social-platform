@@ -7,6 +7,9 @@ import com.li.socialplatform.common.properties.SystemConstants;
 import com.li.socialplatform.common.utils.UserIdUtil;
 import com.li.socialplatform.pojo.entity.Result;
 import com.li.socialplatform.server.mapper.FileMapper;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
@@ -24,6 +27,7 @@ import java.util.*;
 @Slf4j
 @RestController
 @RequestMapping("/upload")
+@Tag(name = "文件上传", description = "图片上传与删除，支持帖子图片和头像")
 @RequiredArgsConstructor
 public class UploadFileController {
     private final SystemConstants systemConstants;
@@ -38,15 +42,18 @@ public class UploadFileController {
 
     private static final long MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
-    // http://localhost:8080/imgs/0/1/73197b62-3682-4f43-bb9e-e2593b62d10d.png
     @PostMapping("/post")
-    public Result uploadBlogImage(@RequestParam("file") MultipartFile image, @RequestParam("postId") Long postId) {
+    @Operation(summary = "上传帖子图片", description = "上传帖子相关图片（最大10MB，支持jpg/png/gif/webp等格式）")
+    public Result uploadBlogImage(
+            @Parameter(description = "图片文件") @RequestParam("file") MultipartFile image,
+            @Parameter(description = "帖子ID") @RequestParam("postId") Long postId) {
         return upload(image, postId);
     }
 
-    //    http://localhost:8080/imgs/1/11/829f7288-f66e-4b8c-8c64-a9b2942270ac.png
     @PostMapping("/avatar")
-    public Result uploadAvatarImage(@RequestParam("file") MultipartFile image) {
+    @Operation(summary = "上传头像", description = "上传用户头像（最大10MB，支持jpg/png/gif/webp等格式）")
+    public Result uploadAvatarImage(
+            @Parameter(description = "头像文件") @RequestParam("file") MultipartFile image) {
         return upload(image, null);
     }
 
@@ -120,7 +127,9 @@ public class UploadFileController {
     }
 
     @DeleteMapping("/delete")
-    public Result deleteFile(@RequestParam("url") String url) {
+    @Operation(summary = "删除文件", description = "根据URL删除单个文件（需验证所有权）")
+    public Result deleteFile(
+            @Parameter(description = "文件URL") @RequestParam("url") String url) {
 
         if (url == null || url.isEmpty()) {
             return Result.error("文件名称不能为空");
@@ -163,7 +172,9 @@ public class UploadFileController {
     }
 
     @DeleteMapping("/delete/{postId}")
-    public Result deleteFile(@PathVariable Long postId) {
+    @Operation(summary = "删除帖子所有文件", description = "删除指定帖子关联的所有图片，并清理无引用的物理文件")
+    public Result deleteFile(
+            @Parameter(description = "帖子ID") @PathVariable Long postId) {
         if (postId == null) {
             return Result.error("参数不能为空");
         }
@@ -187,34 +198,26 @@ public class UploadFileController {
 
 
     private String createNewFileName(String originalFilename, String sha256Hash) {
-        // 获取原始文件名的后缀
         String suffix = StrUtil.subAfter(originalFilename, ".", true);
+        String name = sha256Hash.substring(0, 16);
 
-        // 使用SHA256哈希值作为文件名的一部分，避免重复文件
-        String name = sha256Hash.substring(0, 16); // 取前16位作为文件名
-
-        // 生成目录
         int hash = name.hashCode();
         int d1 = hash & 0xF;
         int d2 = (hash >> 4) & 0xF;
 
-        // 判断目录是否存在
         File dir = new File(systemConstants.imageUploadDir, StrUtil.format("/{}/{}", d1, d2));
         if (!dir.exists()) {
             boolean mkdir = dir.mkdirs();
             log.info("创建目录：{}", mkdir);
         }
-        // 生成文件名
         return StrUtil.format("/{}/{}/{}.{}", d1, d2, name, suffix);
     }
 
 
-    // 计算SHA-256哈希值
     private String calculateSHA256(byte[] data) throws NoSuchAlgorithmException {
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         byte[] hashBytes = digest.digest(data);
 
-        // 将字节数组转换为十六进制字符串
         StringBuilder hexString = new StringBuilder();
         for (byte b : hashBytes) {
             String hex = Integer.toHexString(0xff & b);

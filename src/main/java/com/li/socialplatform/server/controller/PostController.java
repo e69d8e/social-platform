@@ -3,9 +3,11 @@ package com.li.socialplatform.server.controller;
 import com.li.socialplatform.pojo.dto.PostDTO;
 import com.li.socialplatform.pojo.entity.Result;
 import com.li.socialplatform.server.service.IPostService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
-
 
 /**
  * @author e69d8e
@@ -13,52 +15,59 @@ import org.springframework.web.bind.annotation.*;
  */
 @RestController
 @RequestMapping("/post")
+@Tag(name = "帖子", description = "帖子发布、浏览、删除")
 @RequiredArgsConstructor
 public class PostController {
     private final IPostService postService;
 
-    // 发布帖子
     @PostMapping
+    @Operation(summary = "发布帖子", description = "发布一篇新帖子")
     public Result publishPost(@RequestBody PostDTO postDTO) {
         return postService.publishPost(postDTO);
     }
 
-    // 获取帖子详情
     @GetMapping("/{id}")
-    public Result getPost(@PathVariable Long id) {
+    @Operation(summary = "获取帖子详情", description = "根据帖子ID获取帖子详情")
+    public Result getPost(
+            @Parameter(description = "帖子ID") @PathVariable Long id) {
         return postService.getPost(id);
     }
 
-    // 首页帖子列表
     @GetMapping("/list")
-    public Result listPosts(@RequestParam Long lastId, @RequestParam(defaultValue = "0") Integer offset) {
+    @Operation(summary = "首页帖子列表", description = "基于用户兴趣的个性化推荐帖子列表（游标分页）")
+    public Result listPosts(
+            @Parameter(description = "游标ID（首次传当前时间戳）") @RequestParam Long lastId,
+            @Parameter(description = "偏移量") @RequestParam(defaultValue = "0") Integer offset) {
         return postService.listPosts(lastId, offset);
     }
 
-    // 关注帖子列表
     @GetMapping("/follow/list")
-    public Result listFollowPosts(@RequestParam Long lastId, @RequestParam(defaultValue = "0") Integer offset) {
+    @Operation(summary = "关注帖子列表", description = "已关注用户的帖子列表（游标分页）")
+    public Result listFollowPosts(
+            @Parameter(description = "游标ID") @RequestParam Long lastId,
+            @Parameter(description = "偏移量") @RequestParam(defaultValue = "0") Integer offset) {
         return postService.listFollowPosts(lastId, offset);
     }
 
-    // 获取某个用户帖子列表
     @GetMapping("/user/{id}")
-    public Result userListPosts(@PathVariable Long id,
-                                @RequestParam(defaultValue = "1") Integer pageNum,
-                                @RequestParam(defaultValue = "8") Integer pageSize) {
+    @Operation(summary = "用户帖子列表", description = "获取某个用户的帖子列表")
+    public Result userListPosts(
+            @Parameter(description = "用户ID") @PathVariable Long id,
+            @Parameter(description = "页码") @RequestParam(defaultValue = "1") Integer pageNum,
+            @Parameter(description = "每页数量") @RequestParam(defaultValue = "8") Integer pageSize) {
         return postService.userListPosts(id, pageNum, pageSize);
     }
 
-    // 删除帖子
     @DeleteMapping("/{id}")
-    public Result deletePost(@PathVariable Long id) {
+    @Operation(summary = "删除帖子", description = "删除当前用户发布的帖子")
+    public Result deletePost(
+            @Parameter(description = "帖子ID") @PathVariable Long id) {
         return postService.deletePost(id);
     }
 
-    // 生成帖子id
     @GetMapping
+    @Operation(summary = "生成帖子ID", description = "发布前获取一个唯一的帖子ID")
     public Result generatePostId() {
         return postService.generatePostId();
     }
-
 }

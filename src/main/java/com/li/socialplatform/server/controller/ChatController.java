@@ -13,13 +13,13 @@ import reactor.core.publisher.Flux;
 
 @RestController
 @RequestMapping("/chat")
-@Tag(name = "聊天")
+@Tag(name = "AI聊天", description = "AI助手对话（流式输出）")
 @RequiredArgsConstructor
 public class ChatController {
     private final ChatService chatService;
 
     @PostMapping(produces = "text/stream;charset=utf-8")
-    @Operation(summary = "聊天")
+    @Operation(summary = "与AI对话", description = "发送消息给AI助手，以流式方式返回回复")
     public Flux<String> chat(@RequestBody UserMessageDTO userMessageDTO) {
         return chatService.chat(userMessageDTO);
     }

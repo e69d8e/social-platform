@@ -6,6 +6,9 @@ import com.li.socialplatform.pojo.dto.UserDTO;
 import com.li.socialplatform.pojo.entity.Result;
 import com.li.socialplatform.server.service.ISearchHistoryService;
 import com.li.socialplatform.server.service.IUserService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
@@ -16,6 +19,7 @@ import org.springframework.web.bind.annotation.*;
  */
 @RestController
 @RequestMapping("/user")
+@Tag(name = "用户", description = "用户注册、登录、个人信息、签到、搜索")
 @RequiredArgsConstructor
 public class UserController {
 
@@ -23,96 +27,102 @@ public class UserController {
     private final ISearchHistoryService searchHistoryService;
 
     @PostMapping("/login")
+    @Operation(summary = "登录", description = "用户名密码登录，返回accessToken和refreshToken")
     public Result login(@RequestBody LoginDTO loginDTO) {
         return userService.login(loginDTO);
     }
 
     @PostMapping("/refresh")
+    @Operation(summary = "刷新Token", description = "使用refreshToken获取新的token对")
     public Result refresh(@RequestBody RefreshDTO refreshDTO, HttpServletRequest request) {
         return userService.refresh(refreshDTO, request);
     }
 
     @PostMapping("/logout")
+    @Operation(summary = "注销", description = "退出登录，将当前token加入黑名单")
     public Result logout(HttpServletRequest request) {
         return userService.logout(request);
     }
 
-    // 注册
     @PostMapping("/register")
+    @Operation(summary = "注册", description = "新用户注册")
     public Result register(@RequestBody UserDTO userDTO) {
         return userService.register(userDTO);
     }
 
-    // 获取当前用户信息
     @GetMapping("/profile")
+    @Operation(summary = "获取当前用户信息", description = "获取当前登录用户的个人信息")
     public Result getUserProfile() {
         return userService.getUserProfile(null);
     }
 
-    // 获取用户信息
     @GetMapping("/profile/{id}")
-    public Result getUserProfile(@PathVariable Long id) {
+    @Operation(summary = "获取用户信息", description = "根据用户ID获取用户个人信息")
+    public Result getUserProfile(
+            @Parameter(description = "用户ID") @PathVariable Long id) {
         return userService.getUserProfile(id);
     }
 
-    // 修改用户信息
     @PutMapping("/profile")
+    @Operation(summary = "修改用户信息", description = "修改当前登录用户的个人信息")
     public Result updateUserProfile(@RequestBody UserDTO userDTO) {
         return userService.updateUserProfile(userDTO);
     }
 
-    // 修改密码
     @PutMapping("/password")
+    @Operation(summary = "修改密码", description = "修改当前登录用户的密码")
     public Result updatePassword(@RequestBody UserDTO userDTO) {
         return userService.updatePassword(userDTO);
     }
 
-    // 签到 返回当月累计签到次数
     @PostMapping("/sign")
+    @Operation(summary = "签到", description = "每日签到，返回当月累计签到次数")
     public Result signIn() {
         return userService.signIn();
     }
 
-    // 获取当月签到次数
     @GetMapping("/sign")
+    @Operation(summary = "获取签到次数", description = "获取当月累计签到次数")
     public Result signInCount() {
         return userService.signInCount();
     }
 
-    // 用户搜索帖子
     @GetMapping("/list/post")
-    public Result listPost(@RequestParam(defaultValue = "") String keyword,
-                           @RequestParam(defaultValue = "1") Integer pageNum,
-                           @RequestParam(defaultValue = "8") Integer pageSize,
-                           @RequestParam(required = false) Integer categoryId
-    ) {
+    @Operation(summary = "搜索帖子", description = "根据关键词和分类搜索帖子（ES全文搜索）")
+    public Result listPost(
+            @Parameter(description = "搜索关键词") @RequestParam(defaultValue = "") String keyword,
+            @Parameter(description = "页码") @RequestParam(defaultValue = "1") Integer pageNum,
+            @Parameter(description = "每页数量") @RequestParam(defaultValue = "8") Integer pageSize,
+            @Parameter(description = "分类ID") @RequestParam(required = false) Integer categoryId) {
         return userService.listPost(keyword, pageNum, pageSize, categoryId);
     }
 
-    // 用户搜索用户
     @GetMapping("/list/user")
-    public Result listUser(@RequestParam(defaultValue = "") String keyword,
-                           @RequestParam(defaultValue = "1") Integer pageNum,
-                           @RequestParam(defaultValue = "12") Integer pageSize
-    ) {
-    return userService.listUser(keyword, pageNum, pageSize);
+    @Operation(summary = "搜索用户", description = "根据关键词搜索用户（ES搜索）")
+    public Result listUser(
+            @Parameter(description = "搜索关键词") @RequestParam(defaultValue = "") String keyword,
+            @Parameter(description = "页码") @RequestParam(defaultValue = "1") Integer pageNum,
+            @Parameter(description = "每页数量") @RequestParam(defaultValue = "12") Integer pageSize) {
+        return userService.listUser(keyword, pageNum, pageSize);
     }
 
-    // 获取搜索记录
     @GetMapping("/search-history")
-    public Result getSearchRecords(@RequestParam(defaultValue = "1") Integer pageNum,
-                                   @RequestParam(defaultValue = "20") Integer pageSize) {
+    @Operation(summary = "获取搜索记录", description = "获取当前用户的搜索历史记录")
+    public Result getSearchRecords(
+            @Parameter(description = "页码") @RequestParam(defaultValue = "1") Integer pageNum,
+            @Parameter(description = "每页数量") @RequestParam(defaultValue = "20") Integer pageSize) {
         return searchHistoryService.getSearchRecords(pageNum, pageSize);
     }
 
-    // 删除指定搜索记录
     @DeleteMapping("/search-history/{id}")
-    public Result deleteSearchRecord(@PathVariable Long id) {
+    @Operation(summary = "删除搜索记录", description = "删除指定的搜索历史记录")
+    public Result deleteSearchRecord(
+            @Parameter(description = "记录ID") @PathVariable Long id) {
         return searchHistoryService.deleteSearchRecord(id);
     }
 
-    // 一键清空搜索记录
     @DeleteMapping("/search-history")
+    @Operation(summary = "清空搜索记录", description = "一键清空当前用户的所有搜索历史")
     public Result clearSearchRecords() {
         return searchHistoryService.clearSearchRecords();
     }

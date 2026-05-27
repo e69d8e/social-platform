@@ -52,7 +52,8 @@ public class SecurityConfig {
                                                 "/user/list/post", // 获取用户帖子列表
                                                 "/category", // 获取帖子分类
                                                 "/send", // 测试发送消息
-                                                "/chat"
+                                                "/chat",
+                                                "/ws/**"
                                         ).permitAll() // 放行
                                         .requestMatchers(HttpMethod.GET, "/post/{id}", "/post/list",
                                                 "/post/follow/list", "/post/user/{id}", "/comment/{id}",
