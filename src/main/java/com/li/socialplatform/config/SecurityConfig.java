@@ -2,6 +2,7 @@ package com.li.socialplatform.config;
 
 import com.li.socialplatform.filter.JwtAuthenticationFilter;
 import com.li.socialplatform.handler.*;
+import jakarta.servlet.DispatcherType;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -30,6 +31,7 @@ public class SecurityConfig {
         http.authorizeHttpRequests(
                         authorize ->
                                 authorize
+                                        .dispatcherTypeMatchers(DispatcherType.ASYNC, DispatcherType.ERROR).permitAll()
                                         .requestMatchers(
                                                 "/v3/api-docs/**",
                                                 "/swagger-ui/**",
@@ -51,8 +53,6 @@ public class SecurityConfig {
 //                                                "/upload/post", // 上传帖子图片
                                                 "/user/list/post", // 获取用户帖子列表
                                                 "/category", // 获取帖子分类
-                                                "/send", // 测试发送消息
-                                                "/chat",
                                                 "/ws/**"
                                         ).permitAll() // 放行
                                         .requestMatchers(HttpMethod.GET, "/post/{id}", "/post/list",

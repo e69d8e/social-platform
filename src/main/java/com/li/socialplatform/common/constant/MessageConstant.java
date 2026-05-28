@@ -56,4 +56,7 @@ public class MessageConstant {
     public static final String CONVERSATION_NOT_EXIST = "会话不存在";
     public static final String NOT_CONVERSATION_PARTICIPANT = "您不是该会话的参与者";
     public static final String MESSAGE_SEND_SUCCESS = "消息发送成功";
+
+    // 限流
+    public static final String RATE_LIMIT_EXCEEDED = "操作过于频繁，请稍后再试";
 }

@@ -35,6 +35,10 @@ public class SessionServiceImpl implements SessionService {
     @Override
     public Result delete(String sessionId) {
         if (sessionMapper.deleteById(sessionId) > 0) {
+            // 删除 MongoDB 中的聊天记录
+            Criteria criteria = Criteria.where("memoryId").is(sessionId);
+            Query query = Query.query(criteria);
+            mongoTemplate.remove(query, Messages.class);
             return Result.ok();
         }
         return Result.error(MessageConstant.SESSION_NOT_EXIST);

@@ -1,5 +1,6 @@
 package com.li.socialplatform.server.controller;
 
+import com.li.socialplatform.common.annotation.RateLimit;
 import com.li.socialplatform.pojo.entity.Result;
 import com.li.socialplatform.server.service.IFollowService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -24,6 +25,7 @@ public class FollowController {
 
     @PostMapping("/{id}")
     @Operation(summary = "关注用户", description = "关注指定用户")
+    @RateLimit()
     public Result follow(
             @Parameter(description = "被关注用户ID") @PathVariable Long id) {
         return followService.follow(id);
@@ -31,6 +33,7 @@ public class FollowController {
 
     @DeleteMapping("/{id}")
     @Operation(summary = "取消关注", description = "取消关注指定用户")
+    @RateLimit()
     public Result cancelFollow(
             @Parameter(description = "被取消关注用户ID") @PathVariable Long id) {
         return followService.cancelFollow(id);

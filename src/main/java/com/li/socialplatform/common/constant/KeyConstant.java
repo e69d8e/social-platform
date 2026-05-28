@@ -23,4 +23,5 @@ public class KeyConstant {
     public static final String USER_INTEREST_SCORE_KEY = "user-interests:";
     public static final String TOKEN_BLACKLIST_KEY = "token-blacklist:";
     public static final String POST_VIEW_COUNT = "post-view-count:";
+    public static final String RATE_LIMIT_KEY = "rate-limit:";
 }

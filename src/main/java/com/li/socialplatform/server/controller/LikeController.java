@@ -1,5 +1,6 @@
 package com.li.socialplatform.server.controller;
 
+import com.li.socialplatform.common.annotation.RateLimit;
 import com.li.socialplatform.pojo.entity.Result;
 import com.li.socialplatform.server.service.ILikeService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -25,6 +26,7 @@ public class LikeController {
 
     @PutMapping("/{postId}")
     @Operation(summary = "点赞/取消点赞", description = "对帖子进行点赞或取消点赞（切换操作）")
+    @RateLimit()
     public Result like(
             @Parameter(description = "帖子ID") @PathVariable Long postId) {
         return likeService.like(postId);
