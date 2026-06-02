@@ -48,4 +48,20 @@ public class AdminController {
             @Parameter(description = "用户ID") @PathVariable Long id) {
         return adminService.setUser(id);
     }
+
+    @GetMapping("/ban/search")
+    @Operation(summary = "搜索封禁用户", description = "根据关键词搜索被封禁的用户")
+    public Result searchBanUser(
+            @Parameter(description = "搜索关键词") @RequestParam String keyword,
+            @Parameter(description = "页码") @RequestParam(defaultValue = "1") Integer pageNum,
+            @Parameter(description = "每页数量") @RequestParam(defaultValue = "8") Integer pageSize) {
+        return adminService.searchBanUser(keyword, pageNum, pageSize);
+    }
+
+    @GetMapping("/dashboard")
+    @Operation(summary = "数据面板", description = "获取管理后台统计数据：每日发帖数、每周新增用户数、每日活跃用户数")
+    public Result getDashboardStats(
+            @Parameter(description = "统计天数，默认30天") @RequestParam(required = false) Integer days) {
+        return adminService.getDashboardStats(days);
+    }
 }

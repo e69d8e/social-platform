@@ -10,4 +10,8 @@ public interface IAdminService {
     Result setReviewer(Long id);
 
     Result setUser(Long id);
+
+    Result searchBanUser(String keyword, Integer pageNum, Integer pageSize);
+
+    Result getDashboardStats(Integer days);
 }

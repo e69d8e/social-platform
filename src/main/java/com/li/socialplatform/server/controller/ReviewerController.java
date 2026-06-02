@@ -42,4 +42,13 @@ public class ReviewerController {
             @Parameter(description = "帖子ID") @PathVariable("postId") Long postId) {
         return reviewerService.deleteComment(id, postId);
     }
+
+    @GetMapping("/post/ban/search")
+    @Operation(summary = "搜索封禁帖子", description = "根据关键词搜索被封禁的帖子")
+    public Result searchBanPost(
+            @Parameter(description = "搜索关键词") @RequestParam String keyword,
+            @Parameter(description = "页码") @RequestParam(defaultValue = "1") Integer pageNum,
+            @Parameter(description = "每页数量") @RequestParam(defaultValue = "8") Integer pageSize) {
+        return reviewerService.searchBanPost(keyword, pageNum, pageSize);
+    }
 }
