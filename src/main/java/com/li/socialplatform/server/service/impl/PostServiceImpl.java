@@ -38,6 +38,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.ZoneId;
 import java.util.*;
+import java.util.concurrent.TimeUnit;
 
 /**
  * @author e69d8e
@@ -159,8 +160,7 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         postDetailVO.setNickname(user.getNickname());
         postDetailVO.setCover(post.getCover());
         postDetailVO.setFollowed(dataCacheUtil.isFollowed(userId, user.getId()));
-        // 记录浏览量到 Redis
-        redisTemplate.opsForValue().increment(KeyConstant.POST_VIEW_COUNT + id, 1);
+        // 读取浏览量（Redis 中待同步的增量 + DB 中已持久化的值）
         Integer viewCount = (Integer) redisTemplate.opsForValue().get(KeyConstant.POST_VIEW_COUNT + id);
         postDetailVO.setViewCount((post.getViewCount() == null ? 0 : post.getViewCount()) + (viewCount == null ? 0 : viewCount));
         return Result.ok(postDetailVO);
@@ -341,6 +341,31 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         }
         // 解析
         return fans.stream().map(fan -> Long.valueOf(fan.toString())).toList();
+    }
+
+    /**
+     * 记录帖子浏览量，同一用户对同一帖子20秒内只计一次
+     */
+    @Override
+    public Result recordView(Long postId) {
+        if (postId == null) {
+            return Result.error(MessageConstant.ID_IS_NULL);
+        }
+        Long userId = userIdUtil.getUserId();
+        if (userId == null) {
+            return Result.error(MessageConstant.USER_NOT_LOGIN);
+        }
+        String cooldownKey = KeyConstant.POST_VIEW_COOLDOWN + userId + ":" + postId;
+        Boolean exists = redisTemplate.hasKey(cooldownKey);
+        if (exists) {
+            return Result.ok("已浏览");
+        }
+        // 增加浏览量
+        String viewCountKey = KeyConstant.POST_VIEW_COUNT + postId;
+        redisTemplate.opsForValue().increment(viewCountKey);
+        // 设置20秒冷却
+        redisTemplate.opsForValue().set(cooldownKey, 1, 20, TimeUnit.SECONDS);
+        return Result.ok("浏览成功");
     }
 
     private ScrollResult<PostVO> getScrollResult(Set<ZSetOperations.TypedTuple<Object>> typedTuples, Long userId) {

@@ -70,4 +70,11 @@ public class PostController {
     public Result generatePostId() {
         return postService.generatePostId();
     }
+
+    @PostMapping("/view/{id}")
+    @Operation(summary = "记录浏览量", description = "记录用户对帖子的浏览，同一用户20秒内对同一帖子只计一次")
+    public Result recordView(
+            @Parameter(description = "帖子ID") @PathVariable Long id) {
+        return postService.recordView(id);
+    }
 }

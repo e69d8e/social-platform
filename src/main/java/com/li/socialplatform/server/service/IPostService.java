@@ -19,4 +19,6 @@ public interface IPostService extends IService<Post> {
     Result deletePost(Long id);
 
     Result generatePostId();
+
+    Result recordView(Long postId);
 }
