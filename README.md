@@ -10,10 +10,10 @@
 | 框架 | Spring Boot | 3.4.12 |
 | 安全 | Spring Security + JWT (jjwt) | 0.9.1 |
 | ORM | MyBatis-Plus | 3.5.15 |
-| 数据库 | MySQL | - |
-| 缓存 | Redis | - |
-| 搜索 | Elasticsearch | - |
-| 文档数据库 | MongoDB | - |
+| 数据库 | MySQL | 8.0.46 |
+| 缓存 | Redis | 6.0.16 |
+| 搜索 | Elasticsearch | 9.2.0 |
+| 文档数据库 | MongoDB | 8.0.16 |
 | AI 大模型 | LangChain4j + 阿里云 DashScope (通义千问 Plus) | 1.3.0-beta9 |
 | API 文档 | Knife4j (OpenAPI 3) | 4.6.0 |
 | JSON | Alibaba Fastjson2 | 2.0.15 |
