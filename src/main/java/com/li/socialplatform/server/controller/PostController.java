@@ -77,4 +77,10 @@ public class PostController {
             @Parameter(description = "帖子ID") @PathVariable Long id) {
         return postService.recordView(id);
     }
+
+    @PostMapping("/migrate/home")
+    @Operation(summary = "迁移帖子到首页帖子表", description = "读取Redis中的帖子列表，将数据迁移到home_post表")
+    public Result migratePostListToHomePost() {
+        return postService.migratePostListToHomePost();
+    }
 }

@@ -10,6 +10,7 @@ spring:
   data:
     redis:
       host: 127.0.0.1
+#      host: 172.20.165.155
       port: 6379
       password: ${PASSWORD}
       timeout: 3000 # 超时时间

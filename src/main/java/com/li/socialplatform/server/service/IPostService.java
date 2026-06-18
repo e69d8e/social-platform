@@ -21,4 +21,6 @@ public interface IPostService extends IService<Post> {
     Result generatePostId();
 
     Result recordView(Long postId);
+
+    Result migratePostListToHomePost();
 }

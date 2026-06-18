@@ -68,7 +68,8 @@ CREATE TABLE if not exists `follow`
     PRIMARY KEY (`id`),
 #     FOREIGN KEY (`follower_id`) REFERENCES `user` (`id`),
 #     FOREIGN KEY (`followee_id`) REFERENCES `user` (`id`),
-    KEY `idx_followee` (`followee_id`)
+    KEY `idx_followee` (`followee_id`),
+    KEY `idx_follower` (`follower_id`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4 COMMENT ='关注关系表';
 
@@ -269,3 +270,35 @@ CREATE TABLE IF NOT EXISTS `private_message`
     KEY `idx_conversation_time` (`conversation_id`, `create_time` DESC)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4 COMMENT ='私信消息表';
+
+DROP TABLE IF EXISTS `home_post`;
+
+-- 首页帖子表
+CREATE TABLE IF NOT EXISTS `home_post`
+(
+    `id`          BIGINT   NOT NULL AUTO_INCREMENT COMMENT '首页帖子ID',
+    `post_id`     BIGINT   NOT NULL COMMENT '帖子ID',
+    `user_id`     BIGINT   NOT NULL COMMENT '发布者ID',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '添加时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_post_id` (`post_id`),
+    KEY `idx_user_id` (`user_id`),
+    KEY `idx_create_time` (`create_time` DESC)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4 COMMENT ='首页帖子表';
+
+DROP TABLE IF EXISTS `user_inbox`;
+
+-- 用户收件箱表
+CREATE TABLE IF NOT EXISTS `user_inbox`
+(
+    `id`          BIGINT   NOT NULL AUTO_INCREMENT COMMENT '收件箱ID',
+    `user_id`     BIGINT   NOT NULL COMMENT '接收者用户ID',
+    `post_id`     BIGINT   NOT NULL COMMENT '帖子ID',
+    `author_id`   BIGINT   NOT NULL COMMENT '发布者ID',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '推送时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_user_post` (`user_id`, `post_id`),
+    KEY `idx_user_time` (`user_id`, `create_time` DESC)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4 COMMENT ='用户收件箱表';

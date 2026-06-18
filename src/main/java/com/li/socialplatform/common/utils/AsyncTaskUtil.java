@@ -1,10 +1,13 @@
 package com.li.socialplatform.common.utils;
 
+import java.util.List;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.li.socialplatform.pojo.entity.Follow;
 import com.li.socialplatform.pojo.entity.LikeRecord;
 import com.li.socialplatform.pojo.entity.Post;
 import com.li.socialplatform.pojo.entity.User;
+import com.li.socialplatform.pojo.entity.UserInbox;
 import com.li.socialplatform.pojo.entity.UserInterestScore;
 import com.li.socialplatform.server.mapper.*;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +31,7 @@ public class AsyncTaskUtil {
     private final UserInterestScoreMapper userInterestScoreMapper;
     private final PostMapper postMapper;
     private final UserMapper userMapper;
+    private final UserInboxMapper userInboxMapper;
 
     @Async("mvcTaskExecutor")
     public void syncPostLikeCount(Long postId, Integer likeCount) {
@@ -114,6 +118,34 @@ public class AsyncTaskUtil {
             }
         } catch (Exception e) {
             log.error("异步保存用户兴趣分失败: userId={}, categoryId={}, error={}", userId, categoryId, e.getMessage());
+        }
+    }
+
+    /**
+     * 异步批量插入收件箱记录
+     *
+     * @param userIds  接收者用户ID列表
+     * @param postId   帖子ID
+     * @param authorId 发布者ID
+     */
+    @Async("mvcTaskExecutor")
+    public void asyncInsertUserInbox(List<Long> userIds, Long postId, Long authorId) {
+        try {
+            for (Long userId : userIds) {
+                UserInbox inbox = new UserInbox();
+                inbox.setUserId(userId);
+                inbox.setPostId(postId);
+                inbox.setAuthorId(authorId);
+                try {
+                    userInboxMapper.insert(inbox);
+                } catch (Exception e) {
+                    // 唯一键冲突忽略（重复推送）
+                    log.debug("收件箱记录已存在: userId={}, postId={}", userId, postId);
+                }
+            }
+            log.info("批量插入收件箱记录完成: postId={}, count={}", postId, userIds.size());
+        } catch (Exception e) {
+            log.error("异步插入收件箱记录失败: postId={}, error={}", postId, e.getMessage());
         }
     }
 }

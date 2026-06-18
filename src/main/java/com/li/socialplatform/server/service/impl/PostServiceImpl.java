@@ -50,6 +50,7 @@ import java.util.concurrent.TimeUnit;
 public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IPostService {
 
     private final PostMapper postMapper;
+    private final HomePostMapper homePostMapper;
     private final CategoryMapper categoryMapper;
     private final RedisTemplate<String, Object> redisTemplate;
     private final SystemConstants systemConstants;
@@ -63,6 +64,10 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
     private final UserIntersetScoreUtil userIntersetScoreUtil;
     private final DataCacheUtil dataCacheUtil;
     private final ElasticsearchTemplate elasticsearchTemplate;
+    private final UserInboxMapper userInboxMapper;
+    private final AsyncTaskUtil asyncTaskUtil;
+
+    private static final long HOME_POST_CACHE_TTL_DAYS = 7;
 
     // 获取当前登录用户的用户名
     private String getCurrentUsername() {
@@ -112,10 +117,23 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         // 将帖子添加到缓存中
         redisTemplate.opsForZSet().add(KeyConstant.POST_LIST_KEY, post.getId(), time);
         redisTemplate.opsForZSet().add(KeyConstant.POST_KEY + id, post.getId(), time);
+        // 将帖子添加到首页帖子表
+        HomePost homePost = new HomePost();
+        homePost.setPostId(post.getId());
+        homePost.setUserId(id);
+        homePostMapper.insert(homePost);
+        // 添加到首页帖子缓存
+        String homePostKey = KeyConstant.HOME_POST_LIST_KEY;
+        redisTemplate.opsForZSet().add(homePostKey, post.getId(), time);
+        redisTemplate.expire(homePostKey, HOME_POST_CACHE_TTL_DAYS, TimeUnit.DAYS);
         // 查询所有粉丝
         List<Long> fanIds = getFanIds(id);
         // 将帖子添加到粉丝缓存
         fanIds.forEach(fanId -> redisTemplate.opsForZSet().add(KeyConstant.POST_LIST_KEY + fanId, post.getId(), time));
+        // 异步写入粉丝收件箱表
+        if (!fanIds.isEmpty()) {
+            asyncTaskUtil.asyncInsertUserInbox(fanIds, post.getId(), id);
+        }
         post.setLikeCount(0);
         post.setEnabled(true);
         // 转换为纯文本
@@ -171,11 +189,9 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         int pageSize = Integer.parseInt(systemConstants.defaultPageSize);
         Long userId = userIdUtil.getUserId();
 
-        // 未登录：按时间倒序从 Redis ZSet 获取
+        // 未登录：按时间倒序从首页帖子缓存获取
         if (userId == null) {
-            Set<ZSetOperations.TypedTuple<Object>> typedTuples = redisTemplate.opsForZSet()
-                    .reverseRangeByScoreWithScores(KeyConstant.POST_LIST_KEY,
-                            0, lastId, offset, pageSize);
+            Set<ZSetOperations.TypedTuple<Object>> typedTuples = getHomePostCache(lastId, offset, pageSize);
             return Result.ok(getScrollResult(typedTuples, null));
         }
 
@@ -183,15 +199,49 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         Map<Integer, Integer> interestScores = userIntersetScoreUtil.getUserInterestScores(userId);
 
         if (interestScores.isEmpty()) {
-            // 无兴趣数据：按时间倒序
-            Set<ZSetOperations.TypedTuple<Object>> typedTuples = redisTemplate.opsForZSet()
-                    .reverseRangeByScoreWithScores(KeyConstant.POST_LIST_KEY,
-                            0, lastId, offset, pageSize);
+            // 无兴趣数据：按时间倒序从首页帖子缓存获取
+            Set<ZSetOperations.TypedTuple<Object>> typedTuples = getHomePostCache(lastId, offset, pageSize);
             return Result.ok(getScrollResult(typedTuples, userId));
         }
 
         // 个性化推荐：使用 ES 按兴趣分类加权查询
         return getPersonalizedPosts(userId, interestScores, offset, pageSize);
+    }
+
+    /**
+     * 获取首页帖子缓存，缓存未命中时从 home_post 表加载
+     */
+    private Set<ZSetOperations.TypedTuple<Object>> getHomePostCache(Long lastId, int offset, int pageSize) {
+        String homePostKey = KeyConstant.HOME_POST_LIST_KEY;
+        Set<ZSetOperations.TypedTuple<Object>> typedTuples = redisTemplate.opsForZSet()
+                .reverseRangeByScoreWithScores(homePostKey, 0, lastId, offset, pageSize);
+        if (typedTuples != null && !typedTuples.isEmpty()) {
+            return typedTuples;
+        }
+        // 缓存未命中，从 home_post 表加载
+        loadHomePostFromDB();
+        return redisTemplate.opsForZSet()
+                .reverseRangeByScoreWithScores(homePostKey, 0, lastId, offset, pageSize);
+    }
+
+    /**
+     * 从 home_post 表加载数据到 Redis 缓存
+     */
+    private void loadHomePostFromDB() {
+        String homePostKey = KeyConstant.HOME_POST_LIST_KEY;
+        List<HomePost> homePosts = homePostMapper.selectList(
+                new LambdaQueryWrapper<HomePost>().orderByDesc(HomePost::getCreateTime));
+        if (homePosts.isEmpty()) {
+            return;
+        }
+        for (HomePost hp : homePosts) {
+            double score = hp.getCreateTime() != null
+                    ? hp.getCreateTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                    : (double) System.currentTimeMillis();
+            redisTemplate.opsForZSet().add(homePostKey, hp.getPostId(), score);
+        }
+        redisTemplate.expire(homePostKey, HOME_POST_CACHE_TTL_DAYS, TimeUnit.DAYS);
+        log.info("从 home_post 表加载 {} 条首页帖子到缓存", homePosts.size());
     }
 
     private Result getPersonalizedPosts(Long userId, Map<Integer, Integer> interestScores, int offset, int pageSize) {
@@ -298,6 +348,11 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         }
         // 首页帖子删除
         redisTemplate.opsForZSet().remove(KeyConstant.POST_LIST_KEY, id);
+        // 首页帖子表删除
+        homePostMapper.delete(new LambdaQueryWrapper<HomePost>().eq(HomePost::getPostId, id));
+        redisTemplate.opsForZSet().remove(KeyConstant.HOME_POST_LIST_KEY, id);
+        // 收件箱表删除
+        userInboxMapper.delete(new LambdaQueryWrapper<UserInbox>().eq(UserInbox::getPostId, id));
         // 我的帖子删除
         redisTemplate.opsForZSet().remove(KeyConstant.POST_KEY + userId, id);
         // 删除帖子的评论
@@ -366,6 +421,42 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         // 设置20秒冷却
         redisTemplate.opsForValue().set(cooldownKey, 1, 20, TimeUnit.SECONDS);
         return Result.ok("浏览成功");
+    }
+
+    @Override
+    public Result migratePostListToHomePost() {
+        String postListKey = KeyConstant.POST_LIST_KEY;
+        // 读取 Redis 中所有帖子ID（按分数正序，即时间正序）
+        Set<ZSetOperations.TypedTuple<Object>> typedTuples = redisTemplate.opsForZSet()
+                .rangeWithScores(postListKey, 0, -1);
+        if (typedTuples == null || typedTuples.isEmpty()) {
+            return Result.ok("Redis 中无帖子数据", 0);
+        }
+        int count = 0;
+        for (ZSetOperations.TypedTuple<Object> tuple : typedTuples) {
+            Long postId = Long.parseLong(tuple.getValue().toString());
+            Double score = tuple.getScore();
+            // 查询帖子是否存在
+            Post post = postMapper.selectById(postId);
+            if (post == null) {
+                continue;
+            }
+            // 检查是否已在首页帖子表中
+            HomePost existing = homePostMapper.selectOne(
+                    new LambdaQueryWrapper<HomePost>().eq(HomePost::getPostId, postId));
+            if (existing != null) {
+                continue;
+            }
+            HomePost homePost = new HomePost();
+            homePost.setPostId(postId);
+            homePost.setUserId(post.getUserId());
+            homePostMapper.insert(homePost);
+            count++;
+        }
+        // 同步到首页帖子缓存
+        loadHomePostFromDB();
+        log.info("迁移完成，共迁移 {} 条帖子到首页帖子表", count);
+        return Result.ok("迁移完成", count);
     }
 
     private ScrollResult<PostVO> getScrollResult(Set<ZSetOperations.TypedTuple<Object>> typedTuples, Long userId) {
