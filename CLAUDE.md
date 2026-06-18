@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ./mvnw test -Dtest=ClassName#methodName  # Run a single test
 ```
 
-Requires environment variables: `PASSWORD` (MySQL/Redis/JWT secret), `DASH_SCOPE_API_KEY` (DashScope AI).
+Requires environment variables: `PASSWORD` (MySQL/Redis/JWT secret), `DASH_SCOPE_API_KEY` (DashScope AI), `IMAGE_PATH` (Nginx static files directory for uploaded images).
 
 Dependencies: MySQL (3306), Redis (6379/db1), Elasticsearch (9200), MongoDB (27017).
 

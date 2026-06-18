@@ -92,6 +92,7 @@
 ```bash
 PASSWORD=<数据库密码/Redis密码/JWT密钥>
 DASH_SCOPE_API_KEY=<阿里云 DashScope API Key>
+IMAGE_PATH=<Nginx静态文件目录，用于存储上传的图片，如 /usr/share/nginx/html/imgs>
 ```
 
 ## 快速启动
