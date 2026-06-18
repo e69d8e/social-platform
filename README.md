@@ -79,13 +79,14 @@
 
 ### 依赖服务
 
-| 服务 | 端口 | 用途 |
-|---|---|---|
-| MySQL | 3306 | 数据库 `social_platform` |
-| Redis | 6379 | 缓存（DB 1） |
-| Elasticsearch | 9200 | 全文搜索 |
-| MongoDB | 27017 | AI 聊天记忆（DB `chat_memory_db`） |
-| Nginx | 8080 | 静态文件服务（图片访问） |
+| 服务 | 版本 | 端口 | 用途 |
+|---|---|---|---|
+| MySQL | 8.0.46 | 3306 | 数据库 `social_platform` |
+| Redis | 6.0.16 | 6379 | 缓存（DB 1） |
+| Elasticsearch | 9.2.0 | 9200 | 全文搜索 |
+| Kibana | 9.2.0 | 5601 | ES 可视化管理 |
+| MongoDB | 8.0.16 | 27017 | AI 聊天记忆（DB `chat_memory_db`） |
+| Nginx | - | 8080 | 静态文件服务（图片访问） |
 
 ### 环境变量
 
