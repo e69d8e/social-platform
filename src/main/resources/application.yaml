@@ -54,11 +54,10 @@ langchain4j:
 social-platform:
   system-constants:
     user-nickname-prefix: "u_"
-    image-upload-dir: "D:\\Server\\nginx-1.28.0\\nginx-1.28.0\\html\\social_platform_dp\\imgs"
+    image-upload-dir: "${IMAGE_PATH:}"
     base-url: "http://127.0.0.1:8080/imgs"
     default-page-size: 12
     max-page-size: 1
-    default-post-img: "http://127.0.0.1:8080/imgs/post/default.jpg"
     default-avatar: "http://127.0.0.1:8080/imgs/avatar/default.jpg"
     title-max-length: 100
     content-max-length: 12000

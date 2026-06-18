@@ -44,18 +44,24 @@ Spring Boot 3.4.12 + Java 21 social platform with MyBatis-Plus, Redis, Elasticse
 
 **Current user**: `UserIdUtil.getUserId()` reads from `SecurityContextHolder` to get the authenticated user's ID.
 
-**ID generation**: Most entities use MyBatis-Plus `IdType.ASSIGN_ID` (snowflake). Post IDs use `RedisIdUtils.nextId()`.
+**ID generation**: Most entities use MyBatis-Plus `IdType.ASSIGN_ID` (snowflake). Post IDs are pre-generated via `RedisIdUtils.nextId()` through the `/post/generateId` endpoint before post creation.
 
 **Entity convention**: Lombok `@Data` + `@AllArgsConstructor` + `@NoArgsConstructor`. All `Long` IDs serialized as strings via `@JsonFormat(shape = JsonFormat.Shape.STRING)`.
 
 ### Package Layout
 ```
 com.li.socialplatform
+  assistant/           — LangChain4j @AiService interfaces (Assistant, TitleAssistant)
+  bean/                — Shared message beans
+  common/annotation/   — Custom annotations (@RateLimit)
+  common/aspect/       — AOP aspects (RateLimitAspect)
   common/constant/     — KeyConstant (Redis key prefixes), MessageConstant (error messages), AuthorityConstant
-  common/utils/        — JwtUtils, UserIdUtil, RedisIdUtils, DataCacheUtil, AsyncTaskUtil, BanCacheUtil
-  config/              — SecurityConfig, RedisConfig, MybatisPlusConfig, WebMvcConfig, Knife4jConfig
+  common/exception/    — BizException (business logic exceptions)
+  common/properties/   — SystemConstants (configurable system constants)
+  common/utils/        — JwtUtils, UserIdUtil, RedisIdUtils, DataCacheUtil, AsyncTaskUtil, BanCacheUtil, HtmlUtils
+  config/              — SecurityConfig, RedisConfig, MybatisPlusConfig, WebMvcConfig, WebSocketConfig, Knife4jConfig, MemoryChatConfig
   filter/              — JwtAuthenticationFilter
-  handler/             — GlobalExceptionHandler, MyMetaObjectHandler (auto-fill createTime)
+  handler/             — GlobalExceptionHandler, MyMetaObjectHandler (auto-fill createTime), auth handlers
   pojo/dto/            — Request DTOs
   pojo/entity/         — DB entities + Result + ScrollResult
   pojo/vo/             — Response view objects
@@ -65,15 +71,20 @@ com.li.socialplatform
   server/service/      — Service interfaces (extend IService)
   server/service/impl/ — Service implementations (extend ServiceImpl)
   server/task/         — Scheduled tasks (ViewCountSyncTask syncs view counts every 5min)
+  store/               — InMongoChatMemoryStore (MongoDB chat memory persistence)
 ```
 
 ### Database Schema
 
-Full DDL with seed data at `src/main/resources/social_platform.sql`. Tables: user, authority, follow, category, post, comment, like_record, session, ban_record, user_interest_score, file, search_history, private_conversation, private_message.
+Full DDL with seed data at `src/main/resources/social_platform.sql`. Tables: user, authority, follow, category, post, comment, like_record, session, ban_record, user_interest_score, file, search_history, private_conversation, private_message, home_post, user_inbox.
 
 ### API Docs
 
 Knife4j (OpenAPI) available at `http://localhost:8081/doc.html` when running.
+
+### AI Assistant
+
+LangChain4j with DashScope (Qwen) powers the AI chat. The `@AiService` interfaces in `assistant/` use `@SystemMessage(fromResource = "system-prompt.txt")` to load the system prompt from `src/main/resources/system-prompt.txt`. Chat memory is persisted to MongoDB via `InMongoChatMemoryStore`.
 
 ### Adding a New Feature
 

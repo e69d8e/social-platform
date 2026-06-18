@@ -17,7 +17,6 @@ public class SystemConstants {
     public String baseUrl;
     public String defaultPageSize;
     public String maxPageSize;
-    public String defaultPostImg;
     public String defaultAvatar;
     public String titleMaxLength;
     public String contentMaxLength;

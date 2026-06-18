@@ -108,7 +108,7 @@ public class UploadFileController {
 
             String fileUrl = createNewFileName(originalFilename, sha256Hash);
 
-            File destFile = new File(systemConstants.imageUploadDir, fileUrl);
+            File destFile = new File(systemConstants.imageUploadDir, fileUrl).getAbsoluteFile();
             log.info("保存文件到: {}", destFile.getAbsolutePath());
             image.transferTo(destFile);
 

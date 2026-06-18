@@ -33,3 +33,9 @@ build/
 .vscode/
 .claude/
 logs/
+
+### Environment ###
+.env
+
+### Environment ###
+.env

@@ -10,7 +10,7 @@ CREATE TABLE if not exists `user`
     `username`       VARCHAR(64)  NOT NULL UNIQUE COMMENT '用户名',
     `nickname`       VARCHAR(64)  NOT NULL COMMENT '昵称',
     `password`       VARCHAR(128) NOT NULL COMMENT '密码（加密后的哈希值）',
-    `avatar`         VARCHAR(255)          DEFAULT 'http://127.0.0.1:8080/imgs/avatars/default.png' COMMENT '头像URL',
+    `avatar`         VARCHAR(255)          DEFAULT 'http://127.0.0.1:8080/imgs/avatar/default.jpg' COMMENT '头像URL',
     `bio`            VARCHAR(255) NULL COMMENT '个人简介',
     `gender`         TINYINT               DEFAULT 0 COMMENT '性别 (0: 未知, 1: 男, 2: 女)',
     `create_time`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '注册时间',
@@ -84,23 +84,23 @@ CREATE TABLE if not exists `category`
 insert into `category` (`id`, `name`)
 values (1, '其他');
 insert into `category` (`id`, `name`)
-values (2, '生活');
+values (2, '摄影');
 insert into `category` (`id`, `name`)
-values (3, '美食');
+values (3, 'AI');
 insert into `category` (`id`, `name`)
 values (4, '科技');
 insert into `category` (`id`, `name`)
-values (5, '学习');
+values (5, '数码');
 insert into `category` (`id`, `name`)
 values (6, '经济');
 insert into `category` (`id`, `name`)
-values (7, '游戏');
+values (7, '教程');
 insert into `category` (`id`, `name`)
 values (8, '音乐');
 insert into `category` (`id`, `name`)
-values (9, '影视');
+values (9, '历史');
 insert into `category` (`id`, `name`)
-values (11, '历史');
+values (11, '游戏');
 
 drop table if exists `post`;
 # 帖子表
@@ -108,6 +108,8 @@ CREATE TABLE if not exists `post`
 (
     `id`          BIGINT   NOT NULL AUTO_INCREMENT COMMENT '帖子ID',
     `user_id`     BIGINT   NOT NULL COMMENT '用户ID (帖子发布者)',
+    `cover`       VARCHAR(255) NULL COMMENT '封面图URL',
+    `title`       VARCHAR(100) NULL COMMENT '帖子标题',
     `content`     TEXT     NOT NULL COMMENT '帖子内容',
     `category_id` Int               default 1 COMMENT '分类ID',
     `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '发布时间',
