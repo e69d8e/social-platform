@@ -6,10 +6,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.annotation.Transient;
-import org.springframework.data.elasticsearch.annotations.DateFormat;
-import org.springframework.data.elasticsearch.annotations.Document;
-import org.springframework.data.elasticsearch.annotations.Field;
-import org.springframework.data.elasticsearch.annotations.FieldType;
+import org.springframework.data.elasticsearch.annotations.*;
 
 import java.io.Serializable;
 import java.time.LocalDateTime;
@@ -20,6 +17,7 @@ import java.time.LocalDateTime;
  */
 @Document(indexName = "user")
 @TableName("user")
+@Setting(settingPath = "/es/user-settings.json")
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -29,11 +27,17 @@ public class User implements Serializable {
     @Id
     private Long id;
 
-    @Field(type = FieldType.Text, analyzer = "ik_smart")
+    @MultiField(
+            mainField = @Field(type = FieldType.Text, analyzer = "ik_smart"),
+            otherFields = @InnerField(suffix = "edge", type = FieldType.Text, analyzer = "ik_smart_edge_ngram", searchAnalyzer = "ik_smart")
+    )
     @TableField(value = "username")
     private String username;
 
-    @Field(type = FieldType.Text, analyzer = "ik_smart")
+    @MultiField(
+            mainField = @Field(type = FieldType.Text, analyzer = "ik_smart"),
+            otherFields = @InnerField(suffix = "edge", type = FieldType.Text, analyzer = "ik_smart_edge_ngram", searchAnalyzer = "ik_smart")
+    )
     @TableField(value = "nickname")
     private String nickname;
 

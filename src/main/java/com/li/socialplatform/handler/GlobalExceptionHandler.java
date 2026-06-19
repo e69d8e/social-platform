@@ -3,9 +3,11 @@ package com.li.socialplatform.handler;
 import com.li.socialplatform.common.constant.MessageConstant;
 import com.li.socialplatform.common.exception.BizException;
 import com.li.socialplatform.pojo.entity.Result;
+import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -25,6 +27,28 @@ public class GlobalExceptionHandler  {
         return ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
                 .body(Result.error(e.getCode(), e.getMessage()));
+    }
+
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<Result> handleValidationException(MethodArgumentNotValidException e) {
+        String message = e.getBindingResult().getFieldErrors().stream()
+                .map(error -> error.getField() + ": " + error.getDefaultMessage())
+                .findFirst()
+                .orElse("参数校验失败");
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(Result.error(message));
+    }
+
+    @ExceptionHandler(ConstraintViolationException.class)
+    public ResponseEntity<Result> handleConstraintViolation(ConstraintViolationException e) {
+        String message = e.getConstraintViolations().stream()
+                .map(v -> v.getPropertyPath() + ": " + v.getMessage())
+                .findFirst()
+                .orElse("参数校验失败");
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(Result.error(message));
     }
 
     @ExceptionHandler(MissingServletRequestPartException.class)

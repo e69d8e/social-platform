@@ -1,9 +1,11 @@
 package com.li.socialplatform.server.controller;
 
+import com.li.socialplatform.common.annotation.RateLimit;
 import com.li.socialplatform.pojo.dto.UserMessageDTO;
 import com.li.socialplatform.server.service.ChatService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -20,7 +22,8 @@ public class ChatController {
 
     @PostMapping(produces = "text/stream;charset=utf-8")
     @Operation(summary = "与AI对话", description = "发送消息给AI助手，以流式方式返回回复")
-    public Flux<String> chat(@RequestBody UserMessageDTO userMessageDTO) {
+    @RateLimit(maxRequests = 5, timeWindow = 60)
+    public Flux<String> chat(@Valid @RequestBody UserMessageDTO userMessageDTO) {
         return chatService.chat(userMessageDTO);
     }
 }

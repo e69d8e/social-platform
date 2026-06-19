@@ -4,8 +4,11 @@ import com.li.socialplatform.filter.JwtAuthenticationFilter;
 import com.li.socialplatform.handler.*;
 import jakarta.servlet.DispatcherType;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
@@ -23,6 +26,9 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
+
+    @Value("${cors.allowed-origin:http://127.0.0.1:5173}")
+    private String allowedOrigin;
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         //authorizeRequests()：开启授权保护
@@ -42,7 +48,6 @@ public class SecurityConfig {
                                                 "/user/login", // 登录接口
                                                 "/user/refresh", // 刷新token接口
                                                 "/user/register", // 注册接口
-                                                "/test2", // 测试接口
                                                 "/user/profile/*", // 查询其他用户信息接口
                                                 "/follow/list/followee/{id}", // 其他用户关注列表接口
                                                 "/follow/list/{id}", // 其他用户粉丝列表接口
@@ -91,7 +96,7 @@ public class SecurityConfig {
         // 跨域
         http.cors(cors -> {
             CorsConfiguration config = new CorsConfiguration();
-            config.addAllowedOrigin("http://127.0.0.1:5173"); // 必须统一为 127.0.0.1或者 localhost
+            config.addAllowedOrigin(allowedOrigin);
             config.addAllowedMethod("*");
             config.addAllowedHeader("*");
             config.setAllowCredentials(true);
@@ -108,6 +113,11 @@ public class SecurityConfig {
     @Bean
     public AuthenticationManager authenticationManager(AuthenticationConfiguration authConfig) throws Exception {
         return authConfig.getAuthenticationManager();
+    }
+
+    @Bean
+    public PasswordEncoder passwordEncoder() {
+        return new BCryptPasswordEncoder();
     }
 
 }

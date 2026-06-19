@@ -38,6 +38,19 @@ class SocialPlatformApplicationTests {
     @Autowired
     private RedisTemplate<String, Object> redisTemplate;
 
+
+    // 清空Elasticsearch中的数据
+    @Test
+    void clearElasticsearchData() {
+        elasticsearchOperations.indexOps(Post.class).delete();
+        elasticsearchOperations.indexOps(Post.class).create();
+        elasticsearchOperations.indexOps(Post.class).putMapping();
+
+        elasticsearchOperations.indexOps(User.class).delete();
+        elasticsearchOperations.indexOps(User.class).create();
+        elasticsearchOperations.indexOps(User.class).putMapping();
+    }
+
     @Test
     void testAddPostElasticSearch() {
         try {
@@ -81,19 +94,6 @@ class SocialPlatformApplicationTests {
 //        hits.getSearchHits().forEach(hit -> {
 //            System.out.println(hit.getContent());
 //        });
-    }
-
-
-    // 清空Elasticsearch中的数据
-    @Test
-    void clearElasticsearchData() {
-        elasticsearchOperations.indexOps(Post.class).delete();
-        elasticsearchOperations.indexOps(Post.class).create();
-        elasticsearchOperations.indexOps(Post.class).putMapping();
-
-        elasticsearchOperations.indexOps(User.class).delete();
-        elasticsearchOperations.indexOps(User.class).create();
-        elasticsearchOperations.indexOps(User.class).putMapping();
     }
 
     @Test

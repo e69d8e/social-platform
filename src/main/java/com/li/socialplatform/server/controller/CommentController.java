@@ -1,11 +1,13 @@
 package com.li.socialplatform.server.controller;
 
+import com.li.socialplatform.common.annotation.RateLimit;
 import com.li.socialplatform.pojo.dto.CommentDTO;
 import com.li.socialplatform.pojo.entity.Result;
 import com.li.socialplatform.server.service.ICommentService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
@@ -22,7 +24,8 @@ public class CommentController {
 
     @PostMapping
     @Operation(summary = "添加评论", description = "对帖子发表评论或回复评论")
-    public Result addComment(@RequestBody CommentDTO commentDTO) {
+    @RateLimit(maxRequests = 10, timeWindow = 60)
+    public Result addComment(@Valid @RequestBody CommentDTO commentDTO) {
         return commentService.addComment(commentDTO);
     }
 

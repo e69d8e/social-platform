@@ -22,10 +22,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * @author e69d8e
@@ -44,6 +44,7 @@ public class CommentServiceImpl extends ServiceImpl<CommentMapper, Comment> impl
     private final UserIntersetScoreUtil userIntersetScoreUtil;
     private final PostMapper postMapper;
 
+    @Transactional
     @Override
     public Result addComment(CommentDTO commentDTO) {
         log.info(commentDTO.toString());
@@ -99,39 +100,75 @@ public class CommentServiceImpl extends ServiceImpl<CommentMapper, Comment> impl
         }
         // 解析id
         List<Long> commentIds = list.stream().map(commentId -> (Long) commentId).toList();
+
+        // 批量查询一级评论
+        List<Comment> topLevelComments = commentMapper.selectBatchIds(commentIds);
+        Map<Long, Comment> commentMap = topLevelComments.stream()
+                .collect(Collectors.toMap(Comment::getId, c -> c));
+
+        // 批量查询所有子评论
+        List<Comment> allChildren = commentMapper.selectList(new LambdaQueryWrapper<Comment>()
+                .in(Comment::getParentId, commentIds));
+        Map<Long, List<Comment>> childrenMap = allChildren.stream()
+                .collect(Collectors.groupingBy(Comment::getParentId));
+
+        // 收集所有需要查询的用户ID
+        Set<Long> userIds = new HashSet<>();
+        topLevelComments.forEach(c -> userIds.add(c.getUserId()));
+        allChildren.forEach(c -> {
+            userIds.add(c.getUserId());
+            if (c.getReplyTo() != null) {
+                userIds.add(c.getReplyTo());
+            }
+        });
+
+        // 批量查询用户
+        Map<Long, User> userMap = new HashMap<>();
+        if (!userIds.isEmpty()) {
+            userMapper.selectBatchIds(userIds).forEach(u -> userMap.put(u.getId(), u));
+        }
+
+        // 组装 CommentVO
         List<CommentVO> comments = commentIds.stream()
-                .map(commentId -> {
-                    Comment comment = commentMapper.selectById(commentId);
+                .map(commentMap::get)
+                .filter(Objects::nonNull)
+                .map(comment -> {
                     CommentVO commentVO = BeanUtil.copyProperties(comment, CommentVO.class);
                     // 评论的用户
-                    CommentUserVO user = new CommentUserVO();
-                    user.setId(comment.getUserId());
-                    User u = userMapper.selectOne(new LambdaQueryWrapper<User>().eq(User::getId, comment.getUserId()));
-                    user.setNickname(u.getNickname());
-                    user.setAvatar(u.getAvatar());
-                    commentVO.setUser(user);
+                    User u = userMap.get(comment.getUserId());
+                    if (u != null) {
+                        CommentUserVO user = new CommentUserVO();
+                        user.setId(u.getId());
+                        user.setNickname(u.getNickname());
+                        user.setAvatar(u.getAvatar());
+                        commentVO.setUser(user);
+                    }
                     // 子评论
-                    List<Comment> comments1 = commentMapper.selectList(new LambdaQueryWrapper<Comment>()
-                            .eq(Comment::getParentId, comment.getId()));
-                    List<ChildrenVO> children = comments1.stream()
-                            .map(comment1 -> {
+                    List<Comment> childComments = childrenMap.getOrDefault(comment.getId(), List.of());
+                    List<ChildrenVO> children = childComments.stream()
+                            .map(child -> {
                                 ChildrenVO childrenVO = new ChildrenVO();
-                                childrenVO.setId(comment1.getId());
-                                childrenVO.setContent(comment1.getContent());
+                                childrenVO.setId(child.getId());
+                                childrenVO.setContent(child.getContent());
                                 // 子评论的用户
-                                CommentUserVO user1 = new CommentUserVO();
-                                user1.setId(comment1.getUserId());
-                                User u1 = userMapper.selectOne(
-                                        new LambdaQueryWrapper<User>().eq(User::getId, comment1.getUserId()));
-                                user1.setAvatar(u1.getAvatar());
-                                user1.setNickname(u1.getNickname());
-                                childrenVO.setUser(user1);
+                                User u1 = userMap.get(child.getUserId());
+                                if (u1 != null) {
+                                    CommentUserVO user1 = new CommentUserVO();
+                                    user1.setId(u1.getId());
+                                    user1.setAvatar(u1.getAvatar());
+                                    user1.setNickname(u1.getNickname());
+                                    childrenVO.setUser(user1);
+                                }
                                 // 子评论回复的用户
-                                CommentUserVO replyUser1 = new CommentUserVO();
-                                replyUser1.setId(comment1.getReplyTo());
-                                replyUser1.setNickname(userMapper.selectOne(
-                                        new LambdaQueryWrapper<User>().eq(User::getId, comment1.getReplyTo())).getNickname());
-                                childrenVO.setReplyUser(replyUser1);
+                                if (child.getReplyTo() != null) {
+                                    User replyUser = userMap.get(child.getReplyTo());
+                                    if (replyUser != null) {
+                                        CommentUserVO replyUserVO = new CommentUserVO();
+                                        replyUserVO.setId(replyUser.getId());
+                                        replyUserVO.setNickname(replyUser.getNickname());
+                                        childrenVO.setReplyUser(replyUserVO);
+                                    }
+                                }
                                 return childrenVO;
                             }).toList();
                     commentVO.setChildren(children);
@@ -141,13 +178,13 @@ public class CommentServiceImpl extends ServiceImpl<CommentMapper, Comment> impl
         List<Double> scores = typedTuples.stream()
                 .map(ZSetOperations.TypedTuple::getScore).toList();
         // 计算 offset
-        int nweOffset = 1;
+        int newOffset = 1;
         double score = scores.getFirst();
         for (int i = 1; i < scores.size(); i++) {
             if (score == scores.get(i)) {
-                nweOffset++;
+                newOffset++;
             } else {
-                nweOffset = 1;
+                newOffset = 1;
             }
             score = scores.get(i);
         }
@@ -155,7 +192,7 @@ public class CommentServiceImpl extends ServiceImpl<CommentMapper, Comment> impl
         ScrollResult<CommentVO> objectScrollResult = new ScrollResult<>();
         objectScrollResult.setList(comments);
         objectScrollResult.setMinTime(scores.getLast().longValue());
-        objectScrollResult.setOffset(nweOffset);
+        objectScrollResult.setOffset(newOffset);
         return Result.ok(objectScrollResult);
     }
 

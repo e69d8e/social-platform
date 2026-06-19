@@ -11,6 +11,7 @@ import com.li.socialplatform.server.service.ISearchHistoryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -23,11 +24,11 @@ public class SearchHistoryServiceImpl implements ISearchHistoryService {
     private final SearchHistoryMapper searchHistoryMapper;
     private final UserIdUtil userIdUtil;
 
+    @Transactional
     @Override
     public void recordSearch(String keyword, Integer type) {
         Long userId = userIdUtil.getUserId();
         if (userId == null) {
-            Result.ok();
             return;
         }
         List<SearchHistory> list = searchHistoryMapper.selectList(new LambdaQueryWrapper<SearchHistory>()

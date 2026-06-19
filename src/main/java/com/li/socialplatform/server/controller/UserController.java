@@ -1,5 +1,6 @@
 package com.li.socialplatform.server.controller;
 
+import com.li.socialplatform.common.annotation.RateLimit;
 import com.li.socialplatform.pojo.dto.LoginDTO;
 import com.li.socialplatform.pojo.dto.RefreshDTO;
 import com.li.socialplatform.pojo.dto.UserDTO;
@@ -10,7 +11,11 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import lombok.RequiredArgsConstructor;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 /**
@@ -21,6 +26,7 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/user")
 @Tag(name = "用户", description = "用户注册、登录、个人信息、签到、搜索")
 @RequiredArgsConstructor
+@Validated
 public class UserController {
 
     private final IUserService userService;
@@ -28,13 +34,13 @@ public class UserController {
 
     @PostMapping("/login")
     @Operation(summary = "登录", description = "用户名密码登录，返回accessToken和refreshToken")
-    public Result login(@RequestBody LoginDTO loginDTO) {
+    public Result login(@Valid @RequestBody LoginDTO loginDTO) {
         return userService.login(loginDTO);
     }
 
     @PostMapping("/refresh")
     @Operation(summary = "刷新Token", description = "使用refreshToken获取新的token对")
-    public Result refresh(@RequestBody RefreshDTO refreshDTO, HttpServletRequest request) {
+    public Result refresh(@Valid @RequestBody RefreshDTO refreshDTO, HttpServletRequest request) {
         return userService.refresh(refreshDTO, request);
     }
 
@@ -46,7 +52,8 @@ public class UserController {
 
     @PostMapping("/register")
     @Operation(summary = "注册", description = "新用户注册")
-    public Result register(@RequestBody UserDTO userDTO) {
+    @RateLimit(maxRequests = 5, timeWindow = 300)
+    public Result register(@Valid @RequestBody UserDTO userDTO) {
         return userService.register(userDTO);
     }
 
@@ -65,13 +72,13 @@ public class UserController {
 
     @PutMapping("/profile")
     @Operation(summary = "修改用户信息", description = "修改当前登录用户的个人信息")
-    public Result updateUserProfile(@RequestBody UserDTO userDTO) {
+    public Result updateUserProfile(@Valid @RequestBody UserDTO userDTO) {
         return userService.updateUserProfile(userDTO);
     }
 
     @PutMapping("/password")
     @Operation(summary = "修改密码", description = "修改当前登录用户的密码")
-    public Result updatePassword(@RequestBody UserDTO userDTO) {
+    public Result updatePassword(@Valid @RequestBody UserDTO userDTO) {
         return userService.updatePassword(userDTO);
     }
 
@@ -91,8 +98,8 @@ public class UserController {
     @Operation(summary = "搜索帖子", description = "根据关键词和分类搜索帖子（ES全文搜索）")
     public Result listPost(
             @Parameter(description = "搜索关键词") @RequestParam(defaultValue = "") String keyword,
-            @Parameter(description = "页码") @RequestParam(defaultValue = "1") Integer pageNum,
-            @Parameter(description = "每页数量") @RequestParam(defaultValue = "8") Integer pageSize,
+            @Parameter(description = "页码") @RequestParam(defaultValue = "1") @Min(1) Integer pageNum,
+            @Parameter(description = "每页数量") @RequestParam(defaultValue = "8") @Min(1) @Max(100) Integer pageSize,
             @Parameter(description = "分类ID") @RequestParam(required = false) Integer categoryId) {
         return userService.listPost(keyword, pageNum, pageSize, categoryId);
     }
@@ -101,16 +108,16 @@ public class UserController {
     @Operation(summary = "搜索用户", description = "根据关键词搜索用户（ES搜索）")
     public Result listUser(
             @Parameter(description = "搜索关键词") @RequestParam(defaultValue = "") String keyword,
-            @Parameter(description = "页码") @RequestParam(defaultValue = "1") Integer pageNum,
-            @Parameter(description = "每页数量") @RequestParam(defaultValue = "12") Integer pageSize) {
+            @Parameter(description = "页码") @RequestParam(defaultValue = "1") @Min(1) Integer pageNum,
+            @Parameter(description = "每页数量") @RequestParam(defaultValue = "12") @Min(1) @Max(100) Integer pageSize) {
         return userService.listUser(keyword, pageNum, pageSize);
     }
 
     @GetMapping("/search-history")
     @Operation(summary = "获取搜索记录", description = "获取当前用户的搜索历史记录")
     public Result getSearchRecords(
-            @Parameter(description = "页码") @RequestParam(defaultValue = "1") Integer pageNum,
-            @Parameter(description = "每页数量") @RequestParam(defaultValue = "20") Integer pageSize) {
+            @Parameter(description = "页码") @RequestParam(defaultValue = "1") @Min(1) Integer pageNum,
+            @Parameter(description = "每页数量") @RequestParam(defaultValue = "20") @Min(1) @Max(100) Integer pageSize) {
         return searchHistoryService.getSearchRecords(pageNum, pageSize);
     }
 

@@ -19,10 +19,11 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.List;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * @author e69d8e
@@ -39,6 +40,7 @@ public class PrivateMessageServiceImpl extends ServiceImpl<PrivateMessageMapper,
     private final UserIdUtil userIdUtil;
     private final SimpMessagingTemplate messagingTemplate;
 
+    @Transactional
     @Override
     public Result sendMessage(SendMessageDTO dto) {
         // 获取当前用户
@@ -132,6 +134,13 @@ public class PrivateMessageServiceImpl extends ServiceImpl<PrivateMessageMapper,
         if (records.isEmpty()) {
             return Result.ok(new ArrayList<>(), 0L);
         }
+        // 批量查询对方用户信息
+        Set<Long> otherUserIds = records.stream()
+                .map(conv -> userId.equals(conv.getUserAId()) ? conv.getUserBId() : conv.getUserAId())
+                .collect(Collectors.toSet());
+        Map<Long, User> userMap = new HashMap<>();
+        userMapper.selectBatchIds(otherUserIds).forEach(u -> userMap.put(u.getId(), u));
+
         List<ConversationVO> voList = records.stream().map(conv -> {
             ConversationVO vo = new ConversationVO();
             vo.setConversationId(conv.getId());
@@ -150,7 +159,7 @@ public class PrivateMessageServiceImpl extends ServiceImpl<PrivateMessageMapper,
             vo.setLastMessage(conv.getLastMessage());
             vo.setLastMessageTime(conv.getLastMessageTime());
             // 获取对方用户信息
-            User otherUser = userMapper.selectById(otherUserId);
+            User otherUser = userMap.get(otherUserId);
             if (otherUser != null) {
                 vo.setOtherUserNickname(otherUser.getNickname());
                 vo.setOtherUserAvatar(otherUser.getAvatar());
@@ -181,9 +190,14 @@ public class PrivateMessageServiceImpl extends ServiceImpl<PrivateMessageMapper,
         if (records.isEmpty()) {
             return Result.ok(new ArrayList<>(), 0L);
         }
+        // 批量查询发送者信息
+        Set<Long> senderIds = records.stream().map(PrivateMessage::getSenderId).collect(Collectors.toSet());
+        Map<Long, User> senderMap = new HashMap<>();
+        userMapper.selectBatchIds(senderIds).forEach(u -> senderMap.put(u.getId(), u));
+
         List<PrivateMessageVO> voList = records.stream().map(msg -> {
             PrivateMessageVO vo = BeanUtil.copyProperties(msg, PrivateMessageVO.class);
-            User sender = userMapper.selectById(msg.getSenderId());
+            User sender = senderMap.get(msg.getSenderId());
             if (sender != null) {
                 vo.setSenderNickname(sender.getNickname());
                 vo.setSenderAvatar(sender.getAvatar());
@@ -193,6 +207,7 @@ public class PrivateMessageServiceImpl extends ServiceImpl<PrivateMessageMapper,
         return Result.ok(voList, page.getTotal());
     }
 
+    @Transactional
     @Override
     public Result markAsRead(Long conversationId) {
         Long userId = userIdUtil.getUserId();

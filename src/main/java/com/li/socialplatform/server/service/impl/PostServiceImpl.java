@@ -77,6 +77,7 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
 
     private final UserMapper userMapper;
 
+    @Transactional
     @Override
     public Result publishPost(PostDTO postDTO) {
         // 获取当前登录用户id
@@ -316,6 +317,8 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         List<Post> records = postIPage.getRecords();
         List<PostVO> postVOS = new ArrayList<>();
         Long userId = userIdUtil.getUserId();
+        List<Long> postIds = records.stream().map(Post::getId).toList();
+        // 批量获取点赞数和点赞状态（DataCacheUtil 内部已优化为批量查询）
         for (Post record : records) {
             PostVO postVO = BeanUtil.copyProperties(record, PostVO.class);
             postVO.setLikeCount(dataCacheUtil.getLikeCount(record.getId()));
@@ -476,13 +479,15 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         // 获取 score
         List<Double> scores = typedTuples.stream()
                 .map(ZSetOperations.TypedTuple::getScore).toList();
+
+        // 批量查询帖子
+        Map<Long, Post> postMap = new HashMap<>();
+        postMapper.selectBatchIds(ids).forEach(p -> postMap.put(p.getId(), p));
+
         List<PostVO> postVOS = new ArrayList<>();
         for (Long id : ids) {
-            Post post = postMapper.selectById(id);
-            if (post == null) {
-                continue;
-            }
-            if (!post.getEnabled()) {
+            Post post = postMap.get(id);
+            if (post == null || !post.getEnabled()) {
                 continue;
             }
             PostVO postVO = BeanUtil.copyProperties(post, PostVO.class);
@@ -494,19 +499,19 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
             }
             postVOS.add(postVO);
         }
-        int nweOffset = 1;
+        int newOffset = 1;
         double score = scores.getFirst();
         for (int i = 1; i < scores.size(); i++) {
             if (score == scores.get(i)) {
-                nweOffset++;
+                newOffset++;
             } else {
-                nweOffset = 1;
+                newOffset = 1;
             }
             score = scores.get(i);
         }
         ScrollResult<PostVO> postVOScrollResult = new ScrollResult<>();
         postVOScrollResult.setList(postVOS);
-        postVOScrollResult.setOffset(nweOffset);
+        postVOScrollResult.setOffset(newOffset);
         postVOScrollResult.setMinTime(scores.getLast().longValue());
         return postVOScrollResult;
     }

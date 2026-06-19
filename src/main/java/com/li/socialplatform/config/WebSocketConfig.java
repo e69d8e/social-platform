@@ -1,5 +1,6 @@
 package com.li.socialplatform.config;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.li.socialplatform.common.constant.KeyConstant;
 import com.li.socialplatform.common.utils.JwtUtils;
 import com.li.socialplatform.pojo.entity.User;
@@ -8,6 +9,7 @@ import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jetbrains.annotations.NotNull;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.messaging.Message;
@@ -41,6 +43,9 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     private final UserMapper userMapper;
     private final RedisTemplate<String, Object> redisTemplate;
 
+    @Value("${cors.allowed-origin:http://127.0.0.1:5173}")
+    private String allowedOrigin;
+
     @Override
     public void configureMessageBroker(MessageBrokerRegistry config) {
         // 启用简单内存消息代理，前端订阅 /user/queue/messages 接收私信
@@ -52,7 +57,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
         registry.addEndpoint("/ws")
-                .setAllowedOriginPatterns("*")
+                .setAllowedOriginPatterns(allowedOrigin)
                 .withSockJS();
     }
 
@@ -78,8 +83,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                             }
                             if (username != null) {
                                 User user = userMapper.selectOne(
-                                        new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<User>()
-                                                .eq(User::getUsername, username));
+                                        new LambdaQueryWrapper<User>().eq(User::getUsername, username));
                                 if (user != null) {
                                     Principal principal = new UsernamePasswordAuthenticationToken(
                                             String.valueOf(user.getId()), null, Collections.emptyList());

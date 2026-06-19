@@ -24,6 +24,7 @@ import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
 import org.springframework.data.elasticsearch.core.SearchHit;
 import org.springframework.data.elasticsearch.core.SearchHits;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
@@ -46,6 +47,7 @@ public class AdminServiceImpl implements IAdminService {
     private final DashboardMapper dashboardMapper;
     private final ElasticsearchOperations elasticsearchOperations;
 
+    @Transactional
     @Override
     public Result banUser(Long id) {
         User user = userMapper.selectById(id);
@@ -83,12 +85,16 @@ public class AdminServiceImpl implements IAdminService {
             return Result.ok(List.of(), 0L);
         }
         List<Long> ids = members.stream().map(member -> Long.valueOf(member.toString())).toList();
+        // 批量查询用户
+        Map<Long, User> userMap = new HashMap<>();
+        userMapper.selectBatchIds(ids).forEach(u -> userMap.put(u.getId(), u));
+        Long currentUserId = userIdUtil.getUserId();
         List<UserVO> users = new ArrayList<>();
         for (Long id : ids) {
-            User user = userMapper.selectById(id);
+            User user = userMap.get(id);
+            if (user == null) continue;
             UserVO userVO = BeanUtil.copyProperties(user, UserVO.class);
             userVO.setEnabled(false);
-            Long currentUserId = userIdUtil.getUserId();
             userVO.setFollowed(currentUserId != null && dataCacheUtil.isFollowed(currentUserId, id));
             userVO.setFansCount(dataCacheUtil.getFollowerCount(user.getId()));
             users.add(userVO);
@@ -135,7 +141,7 @@ public class AdminServiceImpl implements IAdminService {
         List<String> idStrings = banIds.stream().map(String::valueOf).toList();
         NativeQuery query = NativeQuery.builder()
                 .withQuery(q -> q.bool(b -> b
-                        .must(m -> m.multiMatch(mm -> mm.fields("username", "nickname").query(keyword)))
+                        .must(m -> m.multiMatch(mm -> mm.fields("username.edge", "nickname.edge").query(keyword)))
                         .filter(f -> f.terms(t -> t.field("id").terms(tv -> tv.value(idStrings.stream().map(co.elastic.clients.elasticsearch._types.FieldValue::of).toList()))))))
                 .withPageable(PageRequest.of(pageNum - 1, pageSize))
                 .withSort(Sort.by(Sort.Direction.DESC, "createTime"))

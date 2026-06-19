@@ -5,7 +5,10 @@ import com.li.socialplatform.server.service.IAdminService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.Min;
 import lombok.RequiredArgsConstructor;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 /**
@@ -16,6 +19,7 @@ import org.springframework.web.bind.annotation.*;
 @RequestMapping("/admin")
 @Tag(name = "管理员", description = "管理员操作：封禁用户、设置角色")
 @RequiredArgsConstructor
+@Validated
 public class AdminController {
 
     private final IAdminService adminService;
@@ -30,8 +34,8 @@ public class AdminController {
     @GetMapping("/ban")
     @Operation(summary = "获取封禁用户列表", description = "分页获取被封禁的用户列表")
     public Result getBanUser(
-            @Parameter(description = "页码") @RequestParam(defaultValue = "1") Integer pageNum,
-            @Parameter(description = "每页数量") @RequestParam(defaultValue = "8") Integer pageSize) {
+            @Parameter(description = "页码") @RequestParam(defaultValue = "1") @Min(1) Integer pageNum,
+            @Parameter(description = "每页数量") @RequestParam(defaultValue = "8") @Min(1) @Max(100) Integer pageSize) {
         return adminService.getBanUser(pageNum, pageSize);
     }
 
@@ -53,8 +57,8 @@ public class AdminController {
     @Operation(summary = "搜索封禁用户", description = "根据关键词搜索被封禁的用户")
     public Result searchBanUser(
             @Parameter(description = "搜索关键词") @RequestParam String keyword,
-            @Parameter(description = "页码") @RequestParam(defaultValue = "1") Integer pageNum,
-            @Parameter(description = "每页数量") @RequestParam(defaultValue = "8") Integer pageSize) {
+            @Parameter(description = "页码") @RequestParam(defaultValue = "1") @Min(1) Integer pageNum,
+            @Parameter(description = "每页数量") @RequestParam(defaultValue = "8") @Min(1) @Max(100) Integer pageSize) {
         return adminService.searchBanUser(keyword, pageNum, pageSize);
     }
 

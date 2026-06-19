@@ -25,10 +25,10 @@ import org.springframework.data.elasticsearch.core.SearchHit;
 import org.springframework.data.elasticsearch.core.SearchHits;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * @author e69d8e
@@ -47,6 +47,7 @@ public class ReviewerServiceImpl implements IReviewerService {
     private final PostElasticsearchRepository postElasticsearchRepository;
     private final ElasticsearchOperations elasticsearchOperations;
 
+    @Transactional
     @Override
     public Result banPost(Long id) {
         Post post = postMapper.selectById(id);
@@ -86,9 +87,13 @@ public class ReviewerServiceImpl implements IReviewerService {
             return Result.ok(List.of(), 0L);
         }
         List<Long> ids = members.stream().map(member -> Long.valueOf(member.toString())).toList();
+        // 批量查询帖子
+        Map<Long, Post> postMap = new HashMap<>();
+        postMapper.selectBatchIds(ids).forEach(p -> postMap.put(p.getId(), p));
         List<PostVO> postVOS = new ArrayList<>();
         for (Long id : ids) {
-            Post post = postMapper.selectById(id);
+            Post post = postMap.get(id);
+            if (post == null) continue;
             PostVO postVO = BeanUtil.copyProperties(post, PostVO.class);
             postVO.setLikeCount(dataCacheUtil.getLikeCount(id));
             if (userId != null) {
@@ -102,6 +107,7 @@ public class ReviewerServiceImpl implements IReviewerService {
         return Result.ok(postVOS, total);
     }
 
+    @Transactional
     @Override
     public Result deleteComment(Long id, Long postId) {
         redisTemplate.opsForZSet().remove(KeyConstant.COMMENT_KEY + postId, id);

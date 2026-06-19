@@ -37,6 +37,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
 import org.springframework.data.redis.connection.BitFieldSubCommands;
 import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.security.access.AccessDeniedException;
@@ -47,7 +48,6 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
@@ -75,12 +75,14 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
     private final UserIdUtil userIdUtil;
     private final UserElasticsearchRepository userElasticsearchRepository;
     private final PostElasticsearchRepository postElasticsearchRepository;
+    private final ElasticsearchOperations elasticsearchOperations;
     private final JwtUtils jwtUtils;
     private final AuthenticationManager authenticationManager;
     private final DeleteFileUtil deleteFileUtil;
     private final FileMapper fileMapper;
     private final DataCacheUtil dataCacheUtil;
     private final ISearchHistoryService searchHistoryService;
+    private final PasswordEncoder passwordEncoder;
 
     @Value("${jwt.access-expire}")
     private Long accessExpire;
@@ -90,10 +92,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
     // 密码加密
     private String encodePassword(String password) {
-        // 密码加密
-        PasswordEncoder encoder = new BCryptPasswordEncoder();
-        String result = encoder.encode(password);
-        return "{bcrypt}" + result;
+        return "{bcrypt}" + passwordEncoder.encode(password);
     }
 
     // 获取当前登录用户的用户名
@@ -289,6 +288,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
     @Override
     public Result updatePassword(UserDTO userDTO) {
         User user = userMapper.selectOne(new LambdaQueryWrapper<User>().eq(User::getUsername, getCurrentUsername()));
+        if (user == null) {
+            return Result.error(MessageConstant.USER_NOT_FOUND);
+        }
         user.setPassword(encodePassword(userDTO.getPassword()));
         userMapper.updateById(user);
         return Result.ok(MessageConstant.UPDATE_SUCCESS, "");
@@ -386,42 +388,6 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
             postVOS.add(postVO);
         }
         return Result.ok(postVOS, total);
-//        IPage<Post> page = new Page<>(pageNum, pageSize);
-//        LambdaQueryWrapper<Post> search = new LambdaQueryWrapper<Post>()
-//                .and(wrapper -> wrapper
-//                        .like(Post::getContent, searchContent)
-//                        .or()
-//                        .like(Post::getTitle, searchContent)
-//                )
-//                .eq(Post::getEnabled, true);
-//        if (categoryId != null) {
-//            search = search.eq(Post::getCategoryId, categoryId);
-//        }
-//        IPage<Post> postIPage = postMapper.selectPage(page, search);
-//        List<Post> records = postIPage.getRecords();
-//        if (records.isEmpty()) {
-//            return Result.ok(List.of(), postIPage.getTotal());
-//        }
-//        List<PostVO> postVOS = new ArrayList<>();
-//        Long userId = userIdUtil.getUserId();
-//        for (Post record : records) {
-//            List<PostImage> postImages = postImageMapper.selectList(
-//                    new LambdaQueryWrapper<PostImage>().eq(PostImage::getPostId, record.getId()));
-//            PostVO postVO = BeanUtil.copyProperties(record, PostVO.class);
-//            postVO.setImgUrl(getImgUrl(postImages));
-//            postVO.setPostImages(postImagesToPostImagesVOs(postImages));
-//            if (userId == null) {
-//                postVO.setLiked(false);
-//            } else {
-//                postVO.setLiked(
-//                        redisTemplate.opsForSet()
-//                                .isMember(KeyConstant.LIKE_KEY + record.getId(), userId));
-//            }
-//            Integer count = (Integer) redisTemplate.opsForValue().get(KeyConstant.LIKE_COUNT + record.getId());
-//            postVO.setCount(count == null ? 0 : count);
-//            postVOS.add(postVO);
-//        }
-//        return Result.ok(postVOS, postIPage.getTotal());
     }
 
     @Override
@@ -429,7 +395,14 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         Sort sort = Sort.by(Sort.Direction.DESC, "fansCount");
         Pageable pageable = PageRequest.of(pageNum - 1, pageSize, sort);
         List<User> users = userElasticsearchRepository.findByUsernameOrNickname(keyword, keyword, pageable);
-        long total = userElasticsearchRepository.countByUsernameOrNickname(keyword, keyword);
+        // 使用 ElasticsearchOperations 统一 count 查询（与 find 使用相同的 edge_ngram 查询）
+        long total = 0;
+        if (!users.isEmpty()) {
+            org.springframework.data.elasticsearch.client.elc.NativeQuery countQuery = org.springframework.data.elasticsearch.client.elc.NativeQuery.builder()
+                    .withQuery(q -> q.multiMatch(mm -> mm.fields("username.edge", "nickname.edge").query(keyword)))
+                    .build();
+            total = elasticsearchOperations.count(countQuery, User.class);
+        }
         if (!StringUtils.isEmpty(keyword)) {
             searchHistoryService.recordSearch(keyword, 1);
         }
@@ -437,32 +410,13 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
             return Result.ok(List.of(), 0L);
         }
         List<UserVO> userVOS = new ArrayList<>();
+        Long currentUserId = userIdUtil.getUserId();
         for (User user : users) {
             UserVO userVO = BeanUtil.copyProperties(user, UserVO.class);
-            Long currentUserId = userIdUtil.getUserId();
             userVO.setFollowed(currentUserId != null && dataCacheUtil.isFollowed(currentUserId, user.getId()));
             userVO.setFansCount(dataCacheUtil.getFollowerCount(user.getId()));
             userVOS.add(userVO);
         }
         return Result.ok(userVOS, total);
-//        IPage<User> page = new Page<>(pageNum, pageSize);
-//        LambdaQueryWrapper<User> search = new LambdaQueryWrapper<User>()
-//                .like(User::getNickname, nickname);
-//        if (gender != null) {
-//            search.eq(User::getGender, gender);
-//        }
-//        IPage<User> userIPage = userMapper.selectPage(page, search);
-//        List<User> records = userIPage.getRecords();
-//        List<UserVO> users = new ArrayList<>();
-//        for (User record : records) {
-//            UserVO userVO = BeanUtil.copyProperties(record, UserVO.class);
-//            userVO.setAuthority(authorityMapper.selectById(record.getAuthorityId()).getAuthority());
-//            Double score = redisTemplate.opsForZSet().score(KeyConstant.FOLLOW_LIST + userIdUtil.getUserId(), record.getId());
-//            userVO.setFollowed(score != null);
-//            Integer count = (Integer) redisTemplate.opsForValue().get(KeyConstant.FOLLOW_COUNT_KEY + record.getId());
-//            userVO.setCount(count == null ? 0 : count);
-//            users.add(userVO);
-//        }
-//        return Result.ok(users, userIPage.getTotal());
     }
 }

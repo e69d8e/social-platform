@@ -10,6 +10,7 @@ public class MessageConstant {
     public static final String USERNAME_FORMAT_ERROR = "用户名格式错误";
     public static final String PASSWORD_FORMAT_ERROR = "密码格式错误";
     public static final String USER_PASSWORD_ERROR = "密码错误";
+    public static final String LOGIN_FAILED = "用户名或密码错误";
 
     // 异常
     public static final String EXCEPTION = "服务器异常";

@@ -1,5 +1,6 @@
 package com.li.socialplatform.pojo.dto;
 
+import jakarta.validation.constraints.NotBlank;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -12,5 +13,6 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 @NoArgsConstructor
 public class RefreshDTO {
+    @NotBlank(message = "refreshToken不能为空")
     private String refreshToken;
 }

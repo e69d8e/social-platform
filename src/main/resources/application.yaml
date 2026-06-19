@@ -69,3 +69,6 @@ jwt:
   access-expire: 86400000 # 毫秒值 1天
 #  access-expire: 10000 # 毫秒
   refresh-expire: 604800000 # 7天
+
+cors:
+  allowed-origin: ${CORS_ORIGIN:http://127.0.0.1:5173}
