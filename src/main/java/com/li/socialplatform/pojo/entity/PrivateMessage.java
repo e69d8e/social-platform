@@ -1,6 +1,7 @@
 package com.li.socialplatform.pojo.entity;
 
 import com.baomidou.mybatisplus.annotation.*;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -28,6 +29,7 @@ public class PrivateMessage implements Serializable {
     @TableField(value = "content")
     private String content;
     @TableField(value = "is_read")
+    @JsonProperty("isRead")
     private Boolean isRead;
     @TableField(value = "create_time", fill = FieldFill.INSERT)
     private LocalDateTime createTime;

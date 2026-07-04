@@ -83,6 +83,9 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         // 获取当前登录用户id
         Long id = userIdUtil.getUserId();
         User user = userMapper.selectById(id);
+        if (user == null) {
+            return Result.error(MessageConstant.USER_NOT_FOUND);
+        }
         if (!user.getEnabled()) {
             return Result.error(MessageConstant.USER_NOT_ENABLED);
         }
@@ -172,7 +175,8 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         }
         // 查询是否点过赞
         PostDetailVO postDetailVO = BeanUtil.copyProperties(post, PostDetailVO.class);
-        postDetailVO.setCategory(categoryMapper.selectById(post.getCategoryId()).getName());
+        Category category = categoryMapper.selectById(post.getCategoryId());
+        postDetailVO.setCategory(category != null ? category.getName() : "未分类");
         postDetailVO.setLiked(dataCacheUtil.isLiked(id, userId));
         postDetailVO.setLikeCount(dataCacheUtil.getLikeCount(id));
         postDetailVO.setAvatar(user.getAvatar());
@@ -375,7 +379,7 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         likeMapper.delete(new LambdaQueryWrapper<LikeRecord>().eq(LikeRecord::getPostId, id));
         // 删除帖子redis的点赞数据
         try {
-            redisTemplate.opsForSet().remove(KeyConstant.LIKE_KEY + id);
+            redisTemplate.delete(KeyConstant.LIKE_KEY + id);
         } catch (Exception e) {
             log.error("删除帖子点赞数据失败", e);
         }
@@ -414,15 +418,14 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
             return Result.error(MessageConstant.USER_NOT_LOGIN);
         }
         String cooldownKey = KeyConstant.POST_VIEW_COOLDOWN + userId + ":" + postId;
-        Boolean exists = redisTemplate.hasKey(cooldownKey);
-        if (exists) {
+        // 使用 setIfAbsent 原子操作，避免 hasKey + set 之间的竞态条件
+        Boolean acquired = redisTemplate.opsForValue().setIfAbsent(cooldownKey, 1, 20, TimeUnit.SECONDS);
+        if (!Boolean.TRUE.equals(acquired)) {
             return Result.ok("已浏览");
         }
         // 增加浏览量
         String viewCountKey = KeyConstant.POST_VIEW_COUNT + postId;
         redisTemplate.opsForValue().increment(viewCountKey);
-        // 设置20秒冷却
-        redisTemplate.opsForValue().set(cooldownKey, 1, 20, TimeUnit.SECONDS);
         return Result.ok("浏览成功");
     }
 

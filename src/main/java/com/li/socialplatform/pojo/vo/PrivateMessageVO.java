@@ -1,6 +1,7 @@
 package com.li.socialplatform.pojo.vo;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -31,6 +32,7 @@ public class PrivateMessageVO implements Serializable {
     @Schema(description = "消息内容")
     private String content;
     @Schema(description = "是否已读")
+    @JsonProperty("isRead")
     private Boolean isRead;
     @Schema(description = "发送时间")
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")

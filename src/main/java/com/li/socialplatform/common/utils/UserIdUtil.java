@@ -18,7 +18,13 @@ public class UserIdUtil {
     private final UserMapper userMapper;
     public Long getUserId() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !auth.isAuthenticated()) {
+            return null;
+        }
         String username = auth.getName();
+        if (username == null || "anonymousUser".equals(username)) {
+            return null;
+        }
         User user = userMapper.selectOne(new LambdaQueryWrapper<User>().eq(User::getUsername, username));
         if (user == null) {
             return null;

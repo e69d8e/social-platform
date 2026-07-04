@@ -1,6 +1,6 @@
 spring:
   application:
-    name=: SocialPlatform
+    name: SocialPlatform
   # 数据库连接
   datasource:
     url: jdbc:mysql://127.0.0.1:3306/social_platform?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true

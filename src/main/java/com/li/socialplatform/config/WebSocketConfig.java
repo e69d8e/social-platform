@@ -77,7 +77,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                             String username = claims.getSubject();
                             // 检查 token 是否在黑名单中
                             String jti = claims.getId();
-                            if (jti != null && redisTemplate.hasKey(KeyConstant.TOKEN_BLACKLIST_KEY + jti)) {
+                            if (jti != null && Boolean.TRUE.equals(redisTemplate.hasKey(KeyConstant.TOKEN_BLACKLIST_KEY + jti))) {
                                 log.warn("WebSocket CONNECT 拒绝: token 已注销");
                                 return null;
                             }

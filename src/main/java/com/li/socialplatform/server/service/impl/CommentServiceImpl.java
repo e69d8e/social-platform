@@ -51,6 +51,9 @@ public class CommentServiceImpl extends ServiceImpl<CommentMapper, Comment> impl
         Comment comment = BeanUtil.copyProperties(commentDTO, Comment.class);
         Long userId = userIdUtil.getUserId();
         User user = userMapper.selectById(userId);
+        if (user == null) {
+            return Result.error(MessageConstant.USER_NOT_FOUND);
+        }
         if (!user.getEnabled()) {
             return Result.error(MessageConstant.USER_NOT_ENABLED);
         }
@@ -70,7 +73,9 @@ public class CommentServiceImpl extends ServiceImpl<CommentMapper, Comment> impl
         }
         // 用户兴趣+1
         Post post = postMapper.selectById(comment.getPostId());
-        userIntersetScoreUtil.changeScore(userId, post.getCategoryId(), 5);
+        if (post != null) {
+            userIntersetScoreUtil.changeScore(userId, post.getCategoryId(), 5);
+        }
         return Result.ok(MessageConstant.ADD_COMMENT_SUCCESS, "");
     }
 

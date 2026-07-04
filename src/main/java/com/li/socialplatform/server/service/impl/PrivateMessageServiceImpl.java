@@ -46,6 +46,9 @@ public class PrivateMessageServiceImpl extends ServiceImpl<PrivateMessageMapper,
         // 获取当前用户
         Long userId = userIdUtil.getUserId();
         User sender = userMapper.selectById(userId);
+        if (sender == null) {
+            return Result.error(MessageConstant.USER_NOT_FOUND);
+        }
         if (!sender.getEnabled()) {
             return Result.error(MessageConstant.USER_NOT_ENABLED);
         }

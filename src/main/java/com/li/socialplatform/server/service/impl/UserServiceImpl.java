@@ -92,7 +92,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
     // 密码加密
     private String encodePassword(String password) {
-        return "{bcrypt}" + passwordEncoder.encode(password);
+        return passwordEncoder.encode(password);
     }
 
     // 获取当前登录用户的用户名

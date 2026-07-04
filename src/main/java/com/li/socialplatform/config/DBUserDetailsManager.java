@@ -33,6 +33,9 @@ public class DBUserDetailsManager implements UserDetailsService {
         } else {
             // 将数据库权限表的数据添加到权限列表中
             Authority authority = authorityMapper.selectById(user.getAuthorityId());
+            if (authority == null) {
+                throw new UsernameNotFoundException("用户 " + username + " 的权限信息不存在");
+            }
             log.info("用户角色：{}", authority);
             // 构建 UserDetail 对象
             return org.springframework.security.core.userdetails.User.withUsername(user.getUsername()) //自定义用户名

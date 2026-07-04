@@ -1,6 +1,5 @@
 package com.li.socialplatform.pojo.vo;
 
-import com.baomidou.mybatisplus.annotation.TableName;
 import com.fasterxml.jackson.annotation.JsonFormat;
 import lombok.AllArgsConstructor;
 import lombok.Data;
@@ -17,7 +16,6 @@ import java.util.List;
 @Data
 @AllArgsConstructor
 @NoArgsConstructor
-@TableName("comment")
 public class CommentVO implements Serializable {
     @JsonFormat(shape = JsonFormat.Shape.STRING)
     private Long id;

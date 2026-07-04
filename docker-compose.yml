@@ -1,0 +1,166 @@
+services:
+  # ========== 应用服务 ==========
+  sp-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sp-app
+    ports:
+      - "8081:8081"
+    environment:
+      # Spring Boot 环境变量覆盖 application.yaml 中的地址
+      # 容器间通过服务名通信，而非 127.0.0.1
+      SPRING_DATASOURCE_URL: "jdbc:mysql://sp-mysql:3306/social_platform?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true"
+      SPRING_DATA_REDIS_HOST: "sp-redis"
+      SPRING_DATA_MONGODB_URI: "mongodb://sp-mongodb:27017/chat_memory_db"
+      SPRING_ELASTICSEARCH_URIS: "http://sp-es:9200"
+      # 业务环境变量
+      PASSWORD: "${PASSWORD}"
+      DASH_SCOPE_API_KEY: "${DASH_SCOPE_API_KEY}"
+      IMAGE_PATH: "/usr/local/nginx/html/imgs"
+      CORS_ORIGIN: "${CORS_ORIGIN:-http://127.0.0.1:5173}"
+      # JVM 参数
+      JAVA_OPTS: "-Xms256m -Xmx512m"
+    volumes:
+      - nginx-html:/usr/local/nginx/html
+    depends_on:
+      sp-mysql:
+        condition: service_healthy
+      sp-redis:
+        condition: service_started
+      sp-es:
+        condition: service_healthy
+      sp-mongodb:
+        condition: service_started
+    networks:
+      - sp
+    restart: unless-stopped
+
+  # ========== 基础设施服务 ==========
+
+  sp-mysql:
+    image: mysql:8.0.46
+    container_name: sp-mysql
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: "${PASSWORD}"
+      MYSQL_DATABASE: social_platform
+    volumes:
+      - mysql-data:/var/lib/mysql
+      # 初始化 SQL（首次启动时执行）
+      - ./src/main/resources/social_platform.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - sp
+    restart: unless-stopped
+
+  sp-redis:
+    image: redis:6.0.16
+    container_name: sp-redis
+    ports:
+      - "6379:6379"
+    command: redis-server --requirepass ${PASSWORD}
+    volumes:
+      - redis-data:/data
+    networks:
+      - sp
+    restart: unless-stopped
+
+  sp-es:
+    build:
+      context: ./elasticsearch
+      dockerfile: Dockerfile
+    image: sp-es:9.2.0-ik
+    container_name: sp-es
+    ports:
+      - "9200:9200"
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    volumes:
+      - es-data:/usr/share/elasticsearch/data
+      - es-plugins:/usr/share/elasticsearch/plugins/analysis-ik
+      - es-ik-config:/usr/share/elasticsearch/config/analysis-ik
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    networks:
+      - sp
+    restart: unless-stopped
+
+  sp-mongodb:
+    image: mongo:8.0.16
+    container_name: sp-mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - sp
+    restart: unless-stopped
+
+  sp-nginx:
+    image: nginx:stable-alpine
+    container_name: sp-nginx
+    ports:
+      - "8080:80"
+    volumes:
+      - nginx-config:/etc/nginx:ro
+      - nginx-html:/usr/share/nginx/html:ro
+    networks:
+      - sp
+    restart: unless-stopped
+
+  sp-kibana:
+    image: kibana:9.2.0
+    container_name: sp-kibana
+    ports:
+      - "5601:5601"
+    environment:
+      ELASTICSEARCH_HOSTS: "http://sp-es:9200"
+    depends_on:
+      - sp-es
+    networks:
+      - sp
+    restart: unless-stopped
+
+# ========== 持久化卷 ==========
+# 使用之前已存在的命名卷，保留历史数据
+volumes:
+  mysql-data:
+    name: sp-mysql-data
+    external: true
+  redis-data:
+    name: sp-redis-data
+    external: true
+  es-data:
+    name: sp-es-data
+    external: true
+  es-plugins:
+    name: sp-es-config
+    external: true
+  es-ik-config:
+    name: sp-es-ik-config
+    external: true
+  mongo-data:
+    name: sp-mongodb-data
+    external: true
+  nginx-config:
+    name: sp-nginx-config
+    external: true
+  nginx-html:
+    name: sp-nginx-html
+    external: true
+
+# ========== 网络 ==========
+networks:
+  sp:
+    driver: bridge

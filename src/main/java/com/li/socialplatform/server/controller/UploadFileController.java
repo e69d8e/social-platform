@@ -10,6 +10,8 @@ import com.li.socialplatform.server.mapper.FileMapper;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import com.li.socialplatform.server.mapper.PostMapper;
+import com.li.socialplatform.pojo.entity.Post;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
@@ -33,6 +35,8 @@ public class UploadFileController {
     private final SystemConstants systemConstants;
 
     private final FileMapper fileMapper;
+
+    private final PostMapper postMapper;
 
     private final UserIdUtil userIdUtil;
 
@@ -135,6 +139,10 @@ public class UploadFileController {
             return Result.error("文件名称不能为空");
         }
 
+        if (!url.startsWith(systemConstants.baseUrl)) {
+            return Result.error("无效的文件路径格式");
+        }
+
         url = url.substring(systemConstants.baseUrl.length());
 
         if (!url.startsWith("/")) {
@@ -157,9 +165,21 @@ public class UploadFileController {
             return Result.error("没有权限删除该文件");
         }
 
-        File file = new File(systemConstants.imageUploadDir, url);
+        String relativePath = url.startsWith("/") ? url.substring(1) : url;
+        File file = new File(systemConstants.imageUploadDir, relativePath);
         if (file.isDirectory()) {
             return Result.ok();
+        }
+
+        // 验证最终路径确实在允许的目录内
+        try {
+            String canonicalPath = file.getCanonicalPath();
+            String canonicalBase = new File(systemConstants.imageUploadDir).getCanonicalPath();
+            if (!canonicalPath.startsWith(canonicalBase + File.separator)) {
+                return Result.error("非法的文件路径");
+            }
+        } catch (Exception e) {
+            return Result.error("路径解析失败");
         }
 
         boolean deleted = FileUtil.del(file);
@@ -178,6 +198,15 @@ public class UploadFileController {
         if (postId == null) {
             return Result.error("参数不能为空");
         }
+
+        // 校验当前用户是否为帖子作者
+        Post post = postMapper.selectById(postId);
+        if (post == null) {
+            return Result.error("帖子不存在");
+        }
+        if (!Objects.equals(post.getUserId(), userIdUtil.getUserId())) {
+            return Result.error("没有权限删除该帖子的文件");
+        }
         List<com.li.socialplatform.pojo.entity.File> currentFiles = fileMapper.selectList(
                 new LambdaQueryWrapper<com.li.socialplatform.pojo.entity.File>()
                         .eq(com.li.socialplatform.pojo.entity.File::getPostId, postId));
@@ -189,7 +218,8 @@ public class UploadFileController {
             Long count = fileMapper.selectCount(new LambdaQueryWrapper<com.li.socialplatform.pojo.entity.File>()
                     .eq(com.li.socialplatform.pojo.entity.File::getHash, hash));
             if (count <= 0) {
-                File fileToDelete = new File(systemConstants.imageUploadDir, file.getUrl());
+                String relativePath = file.getUrl().startsWith("/") ? file.getUrl().substring(1) : file.getUrl();
+                File fileToDelete = new File(systemConstants.imageUploadDir, relativePath);
                 FileUtil.del(fileToDelete);
             }
         }

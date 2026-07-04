@@ -1,6 +1,7 @@
 package com.li.socialplatform.pojo.entity;
 
 import com.baomidou.mybatisplus.annotation.*;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
@@ -41,6 +42,7 @@ public class User implements Serializable {
     @TableField(value = "nickname")
     private String nickname;
 
+    @JsonIgnore
     @Transient
     @TableField(value = "password")
     private String password; // 存储加密后的密码

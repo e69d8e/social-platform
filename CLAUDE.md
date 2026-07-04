@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ./mvnw test -Dtest=ClassName#methodName  # Run a single test
 ```
 
-Requires environment variables: `PASSWORD` (MySQL/Redis/JWT secret), `DASH_SCOPE_API_KEY` (DashScope AI), `IMAGE_PATH` (Nginx static files directory for uploaded images).
+Requires environment variables (see `.env.example`): `PASSWORD` (MySQL/Redis/JWT secret), `DASH_SCOPE_API_KEY` (DashScope AI), `IMAGE_PATH` (Nginx static files directory for uploaded images). Optional: `CORS_ORIGIN` (default `http://127.0.0.1:5173`).
 
 Dependencies: MySQL (3306), Redis (6379/db1), Elasticsearch (9200), MongoDB (27017).
 
@@ -32,7 +32,7 @@ Spring Boot 3.4.12 + Java 21 social platform with MyBatis-Plus, Redis, Elasticse
 
 **Response wrapper**: All controllers return `Result` (code 1=success, 0=failure, message, data, total).
 
-**Auth**: JWT stateless auth. `JwtAuthenticationFilter` reads `Authorization: Bearer <token>`, checks Redis blacklist, loads user from DB. Three roles: USER(1), ADMIN(2), REVIEWER(3). Endpoints under `/admin/**` require ROLE_ADMIN, `/reviewer/**` require ROLE_REVIEWER. CORS is hardcoded to `http://127.0.0.1:5173` in `SecurityConfig`.
+**Auth**: JWT stateless auth. `JwtAuthenticationFilter` reads `Authorization: Bearer <token>`, checks Redis blacklist, loads user from DB. Three roles: USER(1), ADMIN(2), REVIEWER(3). Endpoints under `/admin/**` require ROLE_ADMIN, `/reviewer/**` require ROLE_REVIEWER. CORS origin is configurable via `CORS_ORIGIN` env var (default `http://127.0.0.1:5173`).
 
 **Cache-aside + async persistence**: High-frequency writes (likes, follows) go to Redis synchronously, then persist to MySQL asynchronously via `@Async` methods in `AsyncTaskUtil`. `DataCacheUtil` implements cache-aside with 7-day TTL on reads.
 
