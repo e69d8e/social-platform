@@ -20,6 +20,8 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+import java.util.Arrays;
+
 @Configuration
 @EnableMethodSecurity // 开启方法权限控制
 @RequiredArgsConstructor
@@ -27,7 +29,7 @@ public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
 
-    @Value("${cors.allowed-origin:http://127.0.0.1:5173}")
+    @Value("${cors.allowed-origin:http://127.0.0.1:5173,http://127.0.0.1:8080}")
     private String allowedOrigin;
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
@@ -96,7 +98,10 @@ public class SecurityConfig {
         // 跨域
         http.cors(cors -> {
             CorsConfiguration config = new CorsConfiguration();
-            config.addAllowedOrigin(allowedOrigin);
+            Arrays.stream(allowedOrigin.split(","))
+                    .map(String::trim)
+                    .filter(s -> !s.isEmpty())
+                    .forEach(config::addAllowedOrigin);
             config.addAllowedMethod("*");
             config.addAllowedHeader("*");
             config.setAllowCredentials(true);

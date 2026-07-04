@@ -18,7 +18,8 @@ services:
       PASSWORD: "${PASSWORD}"
       DASH_SCOPE_API_KEY: "${DASH_SCOPE_API_KEY}"
       IMAGE_PATH: "/usr/local/nginx/html/imgs"
-      CORS_ORIGIN: "${CORS_ORIGIN:-http://127.0.0.1:5173}"
+      BASE_URL: "${BASE_URL:-http://127.0.0.1:8080/imgs}"
+      CORS_ORIGIN: "${CORS_ORIGIN:-http://127.0.0.1:5173,http://127.0.0.1:8080}"
       # JVM 参数
       JAVA_OPTS: "-Xms256m -Xmx512m"
     volumes:
@@ -85,8 +86,6 @@ services:
       - ES_JAVA_OPTS=-Xms512m -Xmx512m
     volumes:
       - es-data:/usr/share/elasticsearch/data
-      - es-plugins:/usr/share/elasticsearch/plugins/analysis-ik
-      - es-ik-config:/usr/share/elasticsearch/config/analysis-ik
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
       interval: 15s
@@ -143,12 +142,6 @@ volumes:
     external: true
   es-data:
     name: sp-es-data
-    external: true
-  es-plugins:
-    name: sp-es-config
-    external: true
-  es-ik-config:
-    name: sp-es-ik-config
     external: true
   mongo-data:
     name: sp-mongodb-data

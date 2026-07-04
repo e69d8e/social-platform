@@ -55,10 +55,10 @@ social-platform:
   system-constants:
     user-nickname-prefix: "u_"
     image-upload-dir: "${IMAGE_PATH:}"
-    base-url: "http://127.0.0.1:8080/imgs"
+    base-url: "${BASE_URL:http://127.0.0.1:8080/imgs}"
     default-page-size: 12
     max-page-size: 1
-    default-avatar: "http://127.0.0.1:8080/imgs/avatar/default.jpg"
+    default-avatar: "${DEFAULT_AVATAR:http://127.0.0.1:8080/imgs/avatar/default.jpg}"
     title-max-length: 100
     content-max-length: 12000
     nickname-max-length: 16
@@ -71,4 +71,4 @@ jwt:
   refresh-expire: 604800000 # 7天
 
 cors:
-  allowed-origin: ${CORS_ORIGIN:http://127.0.0.1:5173}
+  allowed-origin: ${CORS_ORIGIN:http://127.0.0.1:5173,http://127.0.0.1:8080}

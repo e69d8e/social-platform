@@ -1,0 +1,10 @@
+.git
+target
+*.md
+.env
+.env.example
+docker-compose.yml
+elasticsearch/
+data/
+.idea
+*.iml
