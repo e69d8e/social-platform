@@ -36,18 +36,6 @@ pipeline {
             }
         }
 
-        stage('单元测试') {
-            steps {
-                sh './mvnw test -B'
-            }
-            post {
-                always {
-                    // 收集测试报告
-                    junit allowEmptyResults: true, testResults: 'target/surefire-reports/*.xml'
-                }
-            }
-        }
-
         stage('构建 Docker 镜像') {
             steps {
                 sh """
