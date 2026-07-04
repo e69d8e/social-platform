@@ -24,7 +24,9 @@ pipeline {
     stages {
         stage('检出代码') {
             steps {
-                checkout scm
+                git url: 'https://github.com/e69d8e/social-platform.git',
+                    branch: 'main',
+                    credentialsId: 'sp-github-credentials'
             }
         }
 
