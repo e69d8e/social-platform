@@ -27,4 +27,6 @@ public class KeyConstant {
     public static final String POST_VIEW_COOLDOWN = "post-view-cooldown:";
     public static final String HOME_POST_LIST_KEY = "home-post-list:";
     public static final String USER_INBOX_KEY = "user-inbox:";
+    public static final String SLIDE_CAPTCHA_KEY = "slide:captcha:";
+    public static final String SLIDE_VERIFY_KEY = "slide:verify:";
 }

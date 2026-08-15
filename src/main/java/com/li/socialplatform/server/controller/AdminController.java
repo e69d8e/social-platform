@@ -63,7 +63,7 @@ public class AdminController {
     }
 
     @GetMapping("/dashboard")
-    @Operation(summary = "数据面板", description = "获取管理后台统计数据：每日发帖数、每周新增用户数、每日活跃用户数")
+    @Operation(summary = "数据面板", description = "获取管理后台统计数据：概览卡片、每日发帖数、每周新增用户数、每日活跃用户数（缺失日期已补 0）")
     public Result getDashboardStats(
             @Parameter(description = "统计天数，默认30天") @RequestParam(required = false) Integer days) {
         return adminService.getDashboardStats(days);

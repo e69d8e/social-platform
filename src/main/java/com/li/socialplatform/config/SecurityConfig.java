@@ -50,6 +50,7 @@ public class SecurityConfig {
                                                 "/user/login", // 登录接口
                                                 "/user/refresh", // 刷新token接口
                                                 "/user/register", // 注册接口
+                                                "/captcha/**", // 滑块验证码接口
                                                 "/user/profile/*", // 查询其他用户信息接口
                                                 "/follow/list/followee/{id}", // 其他用户关注列表接口
                                                 "/follow/list/{id}", // 其他用户粉丝列表接口

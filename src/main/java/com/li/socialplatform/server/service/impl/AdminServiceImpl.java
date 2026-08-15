@@ -9,6 +9,7 @@ import com.li.socialplatform.common.utils.UserIdUtil;
 import com.li.socialplatform.pojo.entity.Result;
 import com.li.socialplatform.pojo.entity.User;
 import com.li.socialplatform.pojo.vo.ChartItemVO;
+import com.li.socialplatform.pojo.vo.DashboardSummaryVO;
 import com.li.socialplatform.pojo.vo.UserVO;
 import com.li.socialplatform.server.mapper.DashboardMapper;
 import com.li.socialplatform.server.mapper.UserMapper;
@@ -28,6 +29,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.WeekFields;
 import java.util.*;
 
 
@@ -167,17 +169,94 @@ public class AdminServiceImpl implements IAdminService {
         if (days == null || days <= 0) {
             days = 30;
         }
-        String startDate = LocalDate.now().minusDays(days).format(DateTimeFormatter.ISO_LOCAL_DATE);
+        LocalDate today = LocalDate.now();
+        LocalDate start = today.minusDays(days);
+        String startDate = start.format(DateTimeFormatter.ISO_LOCAL_DATE);
 
-        List<ChartItemVO> dailyPosts = dashboardMapper.countDailyPosts(startDate);
-        List<ChartItemVO> weeklyNewUsers = dashboardMapper.countWeeklyNewUsers(startDate);
-        List<ChartItemVO> dailyActiveUsers = dashboardMapper.countDailyActiveUsers(startDate);
+        // 补齐缺失日期，保证曲线连续（无数据的日期/周补 0）
+        List<ChartItemVO> dailyPosts = padDaily(dashboardMapper.countDailyPosts(startDate), start, today);
+        List<ChartItemVO> weeklyNewUsers = padWeekly(dashboardMapper.countWeeklyNewUsers(startDate), start, today);
+        List<ChartItemVO> dailyActiveUsers = padDaily(dashboardMapper.countDailyActiveUsers(startDate), start, today);
 
         Map<String, Object> data = new LinkedHashMap<>();
+        data.put("summary", buildSummary(today, dailyPosts, dailyActiveUsers));
         data.put("dailyPosts", dailyPosts);
         data.put("weeklyNewUsers", weeklyNewUsers);
         data.put("dailyActiveUsers", dailyActiveUsers);
 
         return Result.ok(data);
+    }
+
+    /**
+     * 组装概览卡片数据
+     */
+    private DashboardSummaryVO buildSummary(LocalDate today, List<ChartItemVO> dailyPosts, List<ChartItemVO> dailyActiveUsers) {
+        String todayStr = today.format(DateTimeFormatter.ISO_LOCAL_DATE);
+        return new DashboardSummaryVO(
+                dashboardMapper.countTotalUsers(),
+                dashboardMapper.countTotalPosts(),
+                dashboardMapper.countTotalComments(),
+                dashboardMapper.countTotalLikes(),
+                dashboardMapper.countTotalViews(),
+                dashboardMapper.countNewUsersOn(todayStr),
+                valueOf(dailyPosts, todayStr),
+                valueOf(dailyActiveUsers, todayStr)
+        );
+    }
+
+    /**
+     * 从补齐后的日序列中取某天的数值
+     */
+    private long valueOf(List<ChartItemVO> series, String date) {
+        for (ChartItemVO item : series) {
+            if (date.equals(item.getDate())) {
+                return item.getCount() == null ? 0L : item.getCount();
+            }
+        }
+        return 0L;
+    }
+
+    /**
+     * 补齐每日序列：区间内无数据的日期补 0
+     */
+    private List<ChartItemVO> padDaily(List<ChartItemVO> raw, LocalDate start, LocalDate end) {
+        Map<LocalDate, Long> countByDate = new HashMap<>();
+        for (ChartItemVO item : raw) {
+            countByDate.put(LocalDate.parse(item.getDate()), item.getCount() == null ? 0L : item.getCount());
+        }
+        List<ChartItemVO> result = new ArrayList<>();
+        for (LocalDate d = start; !d.isAfter(end); d = d.plusDays(1)) {
+            result.add(new ChartItemVO(d.toString(), countByDate.getOrDefault(d, 0L)));
+        }
+        return result;
+    }
+
+    /**
+     * 补齐每周序列：区间内无新增用户的周补 0，周标签使用 ISO-8601（yyyy-Www）
+     */
+    private List<ChartItemVO> padWeekly(List<ChartItemVO> raw, LocalDate start, LocalDate end) {
+        Map<String, Long> countByWeek = new HashMap<>();
+        for (ChartItemVO item : raw) {
+            countByWeek.put(item.getDate(), item.getCount() == null ? 0L : item.getCount());
+        }
+        // 按天遍历，生成去重且有序的周标签集合
+        Set<String> weekLabels = new LinkedHashSet<>();
+        for (LocalDate d = start; !d.isAfter(end); d = d.plusDays(1)) {
+            weekLabels.add(isoWeekLabel(d));
+        }
+        List<ChartItemVO> result = new ArrayList<>();
+        for (String label : weekLabels) {
+            result.add(new ChartItemVO(label, countByWeek.getOrDefault(label, 0L)));
+        }
+        return result;
+    }
+
+    /**
+     * 计算 ISO-8601 周标签，与 SQL 中 DATE_FORMAT(create_time, '%x-W%v') 保持一致
+     */
+    private String isoWeekLabel(LocalDate date) {
+        int weekBasedYear = date.get(WeekFields.ISO.weekBasedYear());
+        int week = date.get(WeekFields.ISO.weekOfWeekBasedYear());
+        return String.format("%d-W%02d", weekBasedYear, week);
     }
 }

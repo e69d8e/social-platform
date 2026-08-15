@@ -31,4 +31,7 @@ public class UserDTO implements Serializable {
 
     private Boolean fansPrivate;
     private Boolean followPrivate;
+
+    // 滑块验证通过后获取的一次性校验令牌（仅注册时使用）
+    private String verifyToken;
 }

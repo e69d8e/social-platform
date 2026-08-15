@@ -16,7 +16,7 @@ services:
       SPRING_ELASTICSEARCH_URIS: "http://sp-es:9200"
       # 业务环境变量
       PASSWORD: "${PASSWORD}"
-      DASH_SCOPE_API_KEY: "${DASH_SCOPE_API_KEY}"
+      DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY}"
       IMAGE_PATH: "/usr/local/nginx/html/imgs"
       BASE_URL: "${BASE_URL:-http://127.0.0.1:8080/imgs}"
       CORS_ORIGIN: "${CORS_ORIGIN:-http://127.0.0.1:5173,http://127.0.0.1:8080}"

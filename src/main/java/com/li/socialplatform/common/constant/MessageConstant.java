@@ -60,4 +60,10 @@ public class MessageConstant {
 
     // 限流
     public static final String RATE_LIMIT_EXCEEDED = "操作过于频繁，请稍后再试";
+
+    // 滑块验证码
+    public static final String CAPTCHA_EXPIRED = "验证码已过期，请刷新";
+    public static final String CAPTCHA_VERIFY_FAIL = "验证不通过";
+    public static final String CAPTCHA_TIMING_ERROR = "验证异常，请重试";
+    public static final String CAPTCHA_NOT_VERIFIED = "请先完成滑块验证";
 }

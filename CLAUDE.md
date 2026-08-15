@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ./mvnw test -Dtest=ClassName#methodName  # Run a single test
 ```
 
-Requires environment variables (see `.env.example`): `PASSWORD` (MySQL/Redis/JWT secret), `DASH_SCOPE_API_KEY` (DashScope AI), `IMAGE_PATH` (Nginx static files directory for uploaded images). Optional: `CORS_ORIGIN` (default `http://127.0.0.1:5173`).
+Requires environment variables (see `.env.example`): `PASSWORD` (MySQL/Redis/JWT secret), `DEEPSEEK_API_KEY` (DeepSeek AI), `IMAGE_PATH` (Nginx static files directory for uploaded images). Optional: `CORS_ORIGIN` (default `http://127.0.0.1:5173`).
 
 Dependencies: MySQL (3306), Redis (6379/db1), Elasticsearch (9200), MongoDB (27017).
 
@@ -84,7 +84,7 @@ Knife4j (OpenAPI) available at `http://localhost:8081/doc.html` when running.
 
 ### AI Assistant
 
-LangChain4j with DashScope (Qwen) powers the AI chat. The `@AiService` interfaces in `assistant/` use `@SystemMessage(fromResource = "system-prompt.txt")` to load the system prompt from `src/main/resources/system-prompt.txt`. Chat memory is persisted to MongoDB via `InMongoChatMemoryStore`.
+LangChain4j with DeepSeek (via the OpenAI-compatible API, model `deepseek-v4-flash`) powers the AI chat. The `@AiService` interfaces in `assistant/` use `@SystemMessage(fromResource = "system-prompt.txt")` to load the system prompt from `src/main/resources/system-prompt.txt`. Chat memory is persisted to MongoDB via `InMongoChatMemoryStore`.
 
 ### Adding a New Feature
 

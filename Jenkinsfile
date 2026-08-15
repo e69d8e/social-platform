@@ -7,7 +7,7 @@ pipeline {
         IMAGE_TAG = "${env.BUILD_NUMBER}"
         // 从 Jenkins Credentials 中读取敏感信息
         PASSWORD        = credentials('sp-password')
-        DASH_SCOPE_API_KEY = credentials('sp-dashscope-api-key')
+        DEEPSEEK_API_KEY = credentials('sp-deepseek-api-key')
         IMAGE_PATH      = '/usr/local/nginx/html/imgs'
         NGINX_DIR       = '/usr/local/nginx'
     }
@@ -54,7 +54,7 @@ pipeline {
                     # 从 Jenkins Credentials 生成 .env 文件（不入库）
                     cat > .env <<EOF
 PASSWORD=${PASSWORD}
-DASH_SCOPE_API_KEY=${DASH_SCOPE_API_KEY}
+DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
 IMAGE_PATH=${IMAGE_PATH}
 NGINX_DIR=${NGINX_DIR}
 CORS_ORIGIN=http://127.0.0.1:5173

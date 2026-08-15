@@ -13,7 +13,7 @@
 | 缓存 | Redis | 6.0.16 |
 | 搜索引擎 | Elasticsearch + IK 分词 | 9.2.0 |
 | 文档数据库 | MongoDB | 8.0.16 |
-| AI 大模型 | LangChain4j + DashScope (通义千问) | 1.3.0-beta9 |
+| AI 大模型 | LangChain4j + DeepSeek (DeepSeek-V4-Flash) | 1.3.0-beta9 |
 | API 文档 | Knife4j (OpenAPI 3) | 4.6.0 |
 | 实时通信 | STOMP over WebSocket | — |
 | 工具库 | Hutool / Fastjson2 / Jsoup / Commons Lang3 | — |
@@ -25,7 +25,7 @@
 - **社交互动** — 关注/取关、点赞、两级评论、互关好友列表
 - **搜索** — Elasticsearch 全文检索帖子和用户、搜索历史记录
 - **私信** — STOMP WebSocket 实时一对一聊天、会话列表、未读消息计数
-- **AI 助手** — 基于通义千问的智能对话，SSE 流式响应，聊天记忆持久化到 MongoDB
+- **AI 助手** — 基于 DeepSeek 的智能对话，SSE 流式响应，聊天记忆持久化到 MongoDB
 - **内容审核** — 管理员封禁用户、审核员封禁帖子/删除评论
 - **文件上传** — 图片上传（SHA-256 去重）、头像上传，支持 jpg/png/gif/webp
 - **限流** — `@RateLimit` 注解 + Redis 分布式限流
@@ -72,7 +72,7 @@ cd social-platform
 
 # 2. 配置环境变量
 cp .env.example .env
-# 编辑 .env 填入 PASSWORD、DASH_SCOPE_API_KEY 等实际值
+# 编辑 .env 填入 PASSWORD、DEEPSEEK_API_KEY 等实际值
 
 # 3. 创建外部卷（首次运行）
 docker volume create sp-mysql-data
@@ -107,7 +107,7 @@ mysql -u root -p social_platform < src/main/resources/social_platform.sql
 
 # 2. 设置环境变量
 export PASSWORD=your_password
-export DASH_SCOPE_API_KEY=your_api_key
+export DEEPSEEK_API_KEY=your_api_key
 export IMAGE_PATH=/path/to/nginx/imgs
 
 # 3. 启动应用
@@ -121,7 +121,7 @@ export IMAGE_PATH=/path/to/nginx/imgs
 | 变量 | 必填 | 说明 |
 |---|---|---|
 | `PASSWORD` | ✅ | MySQL / Redis / JWT 共用密码 |
-| `DASH_SCOPE_API_KEY` | ✅ | 阿里云 DashScope (通义千问) API Key |
+| `DEEPSEEK_API_KEY` | ✅ | DeepSeek API Key |
 | `IMAGE_PATH` | ✅ | Nginx 静态图片目录（上传图片存储路径） |
 | `BASE_URL` | — | 图片访问基础 URL，默认 `http://127.0.0.1:8080/imgs` |
 | `CORS_ORIGIN` | — | 跨域允许来源，默认 `http://127.0.0.1:5173`，多来源逗号分隔 |
@@ -176,6 +176,7 @@ src/main/java/com/li/socialplatform/
 | 模块 | 路径前缀 | 说明 |
 |---|---|---|
 | 用户 | `/user` | 登录、注册、个人信息、签到、搜索 |
+| 滑块验证码 | `/captcha` | 获取滑块验证码、校验滑块、登录/注册携带 verifyToken |
 | 帖子 | `/post` | 发布、删除、信息流、分类筛选、生成 ID |
 | 评论 | `/comment` | 发表评论/回复、获取评论列表 |
 | 关注 | `/follow` | 关注/取关、粉丝/关注列表、互关好友 |

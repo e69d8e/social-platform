@@ -29,17 +29,14 @@ public interface DashboardMapper {
     List<ChartItemVO> countDailyPosts(@Param("startDate") String startDate);
 
     /**
-     * 按周统计新增用户数量
+     * 按周统计新增用户数量（ISO-8601 周，标签形如 "2026-W01"）
      */
     @Select("""
-            SELECT CONCAT(yr, '-W', LPAD(wk + 1, 2, '0')) AS date, cnt AS count
-            FROM (
-                SELECT YEAR(create_time) AS yr, WEEK(create_time, 1) AS wk, COUNT(*) AS cnt
-                FROM user
-                WHERE create_time >= #{startDate}
-                GROUP BY YEAR(create_time), WEEK(create_time, 1)
-            ) t
-            ORDER BY yr, wk
+            SELECT DATE_FORMAT(create_time, '%x-W%v') AS date, COUNT(*) AS count
+            FROM user
+            WHERE create_time >= #{startDate}
+            GROUP BY DATE_FORMAT(create_time, '%x-W%v')
+            ORDER BY MIN(create_time)
             """)
     List<ChartItemVO> countWeeklyNewUsers(@Param("startDate") String startDate);
 
@@ -61,4 +58,40 @@ public interface DashboardMapper {
             ORDER BY date
             """)
     List<ChartItemVO> countDailyActiveUsers(@Param("startDate") String startDate);
+
+    /**
+     * 用户总数
+     */
+    @Select("SELECT COUNT(*) FROM user")
+    Long countTotalUsers();
+
+    /**
+     * 帖子总数
+     */
+    @Select("SELECT COUNT(*) FROM post")
+    Long countTotalPosts();
+
+    /**
+     * 评论总数
+     */
+    @Select("SELECT COUNT(*) FROM comment")
+    Long countTotalComments();
+
+    /**
+     * 点赞总数
+     */
+    @Select("SELECT COUNT(*) FROM like_record")
+    Long countTotalLikes();
+
+    /**
+     * 浏览量总数（帖子浏览数求和）
+     */
+    @Select("SELECT CAST(COALESCE(SUM(view_count), 0) AS SIGNED) FROM post")
+    Long countTotalViews();
+
+    /**
+     * 统计某天（含当天 0 点之后）新增用户数
+     */
+    @Select("SELECT COUNT(*) FROM user WHERE create_time >= #{start}")
+    Long countNewUsersOn(@Param("start") String start);
 }

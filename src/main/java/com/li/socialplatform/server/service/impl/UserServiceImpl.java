@@ -24,6 +24,7 @@ import com.li.socialplatform.pojo.entity.Result;
 import com.li.socialplatform.pojo.entity.User;
 import com.li.socialplatform.pojo.vo.PostVO;
 import com.li.socialplatform.pojo.vo.UserVO;
+import com.li.socialplatform.server.service.ICaptchaService;
 import com.li.socialplatform.server.service.ISearchHistoryService;
 import com.li.socialplatform.server.service.IUserService;
 import io.jsonwebtoken.Claims;
@@ -83,6 +84,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
     private final DataCacheUtil dataCacheUtil;
     private final ISearchHistoryService searchHistoryService;
     private final PasswordEncoder passwordEncoder;
+    private final ICaptchaService captchaService;
 
     @Value("${jwt.access-expire}")
     private Long accessExpire;
@@ -103,6 +105,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
     @Override
     public Result login(LoginDTO loginDTO) {
+        // 校验滑块验证码（原子消费 verifyToken，防止重放）
+        if (!captchaService.consumeVerifyToken(loginDTO.getVerifyToken())) {
+            return Result.error(MessageConstant.CAPTCHA_NOT_VERIFIED);
+        }
         UsernamePasswordAuthenticationToken authToken =
                 new UsernamePasswordAuthenticationToken(loginDTO.getUsername(), loginDTO.getPassword());
 
@@ -183,6 +189,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
     public Result register(UserDTO userDTO) {
         if (userDTO == null || userDTO.getUsername() == null || userDTO.getPassword() == null) {
             return Result.error(MessageConstant.USER_IS_EMPTY);
+        }
+        // 校验滑块验证码（原子消费 verifyToken，防止重放）
+        if (!captchaService.consumeVerifyToken(userDTO.getVerifyToken())) {
+            return Result.error(MessageConstant.CAPTCHA_NOT_VERIFIED);
         }
         // 使用正则校验
         if (!userDTO.getUsername().matches("^[a-zA-Z0-9_-]{4,16}$")) {

@@ -17,4 +17,7 @@ public class LoginDTO {
     private String username;
     @NotBlank(message = "密码不能为空")
     private String password;
+
+    // 滑块验证通过后获取的一次性校验令牌
+    private String verifyToken;
 }
