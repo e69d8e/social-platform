@@ -26,6 +26,8 @@ public class PostDTO implements Serializable {
     @NotBlank(message = "内容不能为空")
     @Size(max = 12000, message = "内容长度不能超过12000")
     private String content;
-    @NotNull(message = "分类不能为空")
+    /**
+     * 帖子分类ID，允许为空；为空时由服务层默认为“其他”分类（id=1）
+     */
     private Integer categoryId;
 }

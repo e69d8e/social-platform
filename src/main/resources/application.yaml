@@ -1,6 +1,8 @@
 spring:
   application:
     name: SocialPlatform
+  config:
+    import: "optional:file:.env[.properties]"  # 自动读取项目根目录 .env，避免忘记 source（自定义 source 导入）
   # 数据库连接
   datasource:
     url: jdbc:mysql://127.0.0.1:3306/social_platform?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true

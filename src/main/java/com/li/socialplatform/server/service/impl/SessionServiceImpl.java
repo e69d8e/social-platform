@@ -52,7 +52,8 @@ public class SessionServiceImpl implements SessionService {
         // 分页查询会话
         Page<Session> sessionPage = new Page<>(page, size);
         LambdaQueryWrapper<Session> queryWrapper = new LambdaQueryWrapper<>();
-        queryWrapper.eq(Session::getUserId, userId); // 条件
+        queryWrapper.eq(Session::getUserId, userId) // 条件
+                .orderByDesc(Session::getTime); // 按时间从大到小排序
         Page<Session> session = sessionMapper.selectPage(sessionPage, queryWrapper);
         return Result.ok(session.getRecords(), session.getTotal());
     }

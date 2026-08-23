@@ -36,3 +36,5 @@ logs/
 
 ### Environment ###
 .env
+# 本地图片存储目录
+/html/

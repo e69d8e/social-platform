@@ -69,6 +69,9 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
 
     private static final long HOME_POST_CACHE_TTL_DAYS = 7;
 
+    /** 默认分类ID：social_platform.sql 中 category 表种子数据 id=1 为“其他” */
+    private static final Integer DEFAULT_CATEGORY_ID = 1;
+
     // 获取当前登录用户的用户名
     private String getCurrentUsername() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
@@ -114,7 +117,7 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         }
         post.setContent(content);
         post.setCover(postDTO.getCover());
-        post.setCategoryId(postDTO.getCategoryId() == null ? 1 : postDTO.getCategoryId());
+        post.setCategoryId(postDTO.getCategoryId() == null ? DEFAULT_CATEGORY_ID : postDTO.getCategoryId());
         postMapper.insert(post);
         log.info("用户 {} 发表了帖子 {}", id, post.getId());
         long time = System.currentTimeMillis();

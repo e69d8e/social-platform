@@ -11,6 +11,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.multipart.MultipartException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
 import org.springframework.web.servlet.resource.NoResourceFoundException;
@@ -63,6 +64,13 @@ public class GlobalExceptionHandler  {
         return ResponseEntity
                 .status(HttpStatus.BAD_REQUEST)
                 .body(Result.error("缺少必要的请求参数: " + e.getParameterName()));
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<Result> handleMaxUploadSizeExceeded(MaxUploadSizeExceededException e) {
+        return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(Result.error("上传文件大小超过限制（最大10MB）"));
     }
 
     @ExceptionHandler(MultipartException.class)

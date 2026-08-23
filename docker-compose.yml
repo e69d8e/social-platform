@@ -24,6 +24,7 @@ services:
       JAVA_OPTS: "-Xms256m -Xmx512m"
     volumes:
       - nginx-html:/usr/local/nginx/html
+      - ./html/imgs:/usr/local/nginx/html/imgs  # 宿主机目录：与 sp-nginx 共享同一份图片
     depends_on:
       sp-mysql:
         condition: service_healthy
@@ -102,6 +103,7 @@ services:
       - "27017:27017"
     volumes:
       - mongo-data:/data/db
+      - mongo-config:/data/configdb
     networks:
       - sp
     restart: unless-stopped
@@ -113,7 +115,8 @@ services:
       - "8080:80"
     volumes:
       - nginx-config:/etc/nginx:ro
-      - nginx-html:/usr/share/nginx/html:ro
+      - nginx-html:/usr/share/nginx/html  # 需可写：否则无法在其下为 imgs 创建子挂载点（会报 read-only file system）
+      - ./html/imgs:/usr/share/nginx/html/imgs:ro  # 宿主机项目 html/imgs，与 sp-app 共享同一份图片
     networks:
       - sp
     restart: unless-stopped
@@ -146,6 +149,8 @@ volumes:
   mongo-data:
     name: sp-mongodb-data
     external: true
+  mongo-config:
+    name: sp-mongo-config
   nginx-config:
     name: sp-nginx-config
     external: true

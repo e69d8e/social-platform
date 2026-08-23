@@ -27,7 +27,7 @@
 - **私信** — STOMP WebSocket 实时一对一聊天、会话列表、未读消息计数
 - **AI 助手** — 基于 DeepSeek 的智能对话，SSE 流式响应，聊天记忆持久化到 MongoDB
 - **内容审核** — 管理员封禁用户、审核员封禁帖子/删除评论
-- **文件上传** — 图片上传（SHA-256 去重）、头像上传，支持 jpg/png/gif/webp
+- **文件上传** — 图片上传（SHA-256 去重）、头像上传，支持 jpg/png/gif/webp，经 Nginx 静态服务对外访问
 - **限流** — `@RateLimit` 注解 + Redis 分布式限流
 
 ## 系统架构
@@ -82,13 +82,20 @@ docker volume create sp-mongodb-data
 docker volume create sp-nginx-config
 docker volume create sp-nginx-html
 
-# 4. 启动所有服务
+# 4. 初始化 Nginx 配置与前端静态文件（首次运行）
+#    a) sp-nginx-config 卷：放入 nginx.conf + conf.d/default.conf（/api 的 upstream 指向 sp-app:8081）
+#    b) sp-nginx-html 卷：放入前端 social_platform_vue 打包的 dist 产物（assets/、index.html）
+#    详细配置见 docs/docker-upload-nginx.md
+
+# 5. 启动所有服务（sp-app 镜像由 Dockerfile 多阶段构建）
 docker compose up -d
 
-# 5. 导入数据库（首次运行，MySQL 健康检查通过后自动执行）
+# 6. 导入数据库（首次运行，MySQL 健康检查通过后自动执行）
 # 如需手动导入：
 docker compose exec sp-mysql mysql -uroot -p${PASSWORD} social_platform < /docker-entrypoint-initdb.d/init.sql
 ```
+
+> 纯 Docker 模式下：图片存宿主机 `html/imgs`（bind mount 供 sp-app 写入、sp-nginx 只读共享），容器内 `IMAGE_PATH=/usr/local/nginx/html/imgs`；nginx `/api` 的 upstream 需配置为 `sp-app:8081`（服务名通信），否则前端经 8080 调接口会 502。
 
 启动后访问：
 
@@ -96,25 +103,37 @@ docker compose exec sp-mysql mysql -uroot -p${PASSWORD} social_platform < /docke
 |---|---|
 | 应用 | http://localhost:8081 |
 | API 文档 (Knife4j) | http://localhost:8081/doc.html |
-| Nginx 静态资源 | http://localhost:8080 |
+| Nginx（前端页面 + 图片静态服务） | http://localhost:8080 |
 | Kibana | http://localhost:5601 |
 
-### 方式二：本地运行
+### 方式二：本地混合开发（推荐）
+
+基础设施（MySQL / Redis / ES / MongoDB / Nginx）用 Docker 运行，应用跑在宿主机（日常开发模式）：
 
 ```bash
-# 1. 导入数据库
-mysql -u root -p social_platform < src/main/resources/social_platform.sql
+# 1. 启动基础设施（不含 sp-app）
+docker compose up -d sp-mysql sp-redis sp-es sp-mongodb sp-kibana sp-nginx
 
 # 2. 设置环境变量
 export PASSWORD=your_password
 export DEEPSEEK_API_KEY=your_api_key
-export IMAGE_PATH=/path/to/nginx/imgs
+export IMAGE_PATH=$(pwd)/html/imgs    # 与 sp-nginx 共享同一宿主机图片目录
+export BASE_URL=http://127.0.0.1:8080/imgs
 
-# 3. 启动应用
+# 3. 启动应用（端口 8081）
 ./mvnw spring-boot:run
 ```
 
-> 需要本地安装并启动 MySQL (3306)、Redis (6379)、Elasticsearch (9200，需安装 IK 分词插件)、MongoDB (27017)。
+> 混合模式下前端与图片都经 Nginx（8080）访问，`/api` 反向代理到宿主机应用的 `host.docker.internal:8081` 上。若完全脱离 Docker，需本地安装并启动 MySQL (3306)、Redis (6379)、Elasticsearch (9200，需 IK 分词插件)、MongoDB (27017)，此时 `IMAGE_PATH` 指向任意 Nginx 可读目录即可。
+
+### 文件上传 × Nginx 图片服务
+
+- 应用负责把图片写入 `IMAGE_PATH`：混合模式为宿主机 `html/imgs`；纯 Docker 模式为容器内 `/usr/local/nginx/html/imgs`，经 bind mount 同样落到宿主机 `html/imgs`
+- 上传校验：10MB 上限、jpg/png/gif/webp 等扩展名白名单、头像 1:1 / 帖子封面 5:3 宽高比、SHA-256 内容去重、两级 16 进制目录分片存储
+- 返回 URL = `BASE_URL`（默认 `http://127.0.0.1:8080/imgs`）+ 相对路径，指向 **Nginx** 而非应用端口
+- Nginx 通过 bind mount（只读）共享同一 `html/imgs` 目录，`/imgs` 直接返回静态图片（no-cache，删除后即时消失），**不经过 Spring Boot**
+
+完整逻辑（挂载关系、读写链路、删除引用计数、易踩的坑）见 [`docs/docker-upload-nginx.md`](docs/docker-upload-nginx.md)。
 
 ## 环境变量
 
@@ -122,8 +141,9 @@ export IMAGE_PATH=/path/to/nginx/imgs
 |---|---|---|
 | `PASSWORD` | ✅ | MySQL / Redis / JWT 共用密码 |
 | `DEEPSEEK_API_KEY` | ✅ | DeepSeek API Key |
-| `IMAGE_PATH` | ✅ | Nginx 静态图片目录（上传图片存储路径） |
-| `BASE_URL` | — | 图片访问基础 URL，默认 `http://127.0.0.1:8080/imgs` |
+| `IMAGE_PATH` | ✅ | 图片存储目录（混合模式指向 `html/imgs`；Docker 模式由 compose 固定为 `/usr/local/nginx/html/imgs`） |
+| `BASE_URL` | — | 图片访问基础 URL，默认 `http://127.0.0.1:8080/imgs`（指向 Nginx） |
+| `NGINX_DIR` | — | 宿主机 Nginx 目录（Jenkins 部署用），Docker 模式不需要 |
 | `CORS_ORIGIN` | — | 跨域允许来源，默认 `http://127.0.0.1:5173`，多来源逗号分隔 |
 
 完整示例见 [`.env.example`](.env.example)。
@@ -206,6 +226,11 @@ src/main/java/com/li/socialplatform/
 5. `server/controller/` — 创建 Controller，返回 `Result`
 6. `common/constant/` — 添加错误消息到 `MessageConstant`，Redis Key 到 `KeyConstant`
 7. `config/SecurityConfig` — 如需公开接口，添加到 `permitAll()`
+
+## 文档
+
+- [`docs/docker-upload-nginx.md`](docs/docker-upload-nginx.md) — Docker × 文件上传 × Nginx 的完整逻辑说明（挂载关系、上传/访问/删除链路、两种运行模式、易踩的坑）
+- [`docs/class-diagram.md`](docs/class-diagram.md) — 系统类图
 
 ## 许可证
 
