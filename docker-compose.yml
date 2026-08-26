@@ -19,21 +19,25 @@ services:
       DEEPSEEK_API_KEY: "${DEEPSEEK_API_KEY}"
       IMAGE_PATH: "/usr/local/nginx/html/imgs"
       BASE_URL: "${BASE_URL:-http://127.0.0.1:8080/imgs}"
-      CORS_ORIGIN: "${CORS_ORIGIN:-http://127.0.0.1:5173,http://127.0.0.1:8080}"
+      CORS_ORIGIN: "${CORS_ORIGIN:-http://127.0.0.1:5173,http://127.0.0.1:8080,http://localhost:5173,http://localhost:8080}"
       # JVM 参数
-      JAVA_OPTS: "-Xms256m -Xmx512m"
+      JAVA_OPTS: "-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -XX:InitialRAMPercentage=50.0 -Dfile.encoding=UTF-8 -Djava.security.egd=file:/dev/./urandom"
     volumes:
-      - nginx-html:/usr/local/nginx/html
       - ./html/imgs:/usr/local/nginx/html/imgs  # 宿主机目录：与 sp-nginx 共享同一份图片
     depends_on:
       sp-mysql:
         condition: service_healthy
       sp-redis:
-        condition: service_started
+        condition: service_healthy
       sp-es:
         condition: service_healthy
       sp-mongodb:
-        condition: service_started
+        condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
     networks:
       - sp
     restart: unless-stopped
@@ -43,6 +47,10 @@ services:
   sp-mysql:
     image: mysql:8.0.46
     container_name: sp-mysql
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --default-time-zone=+08:00
     ports:
       - "3306:3306"
     environment:
@@ -57,6 +65,12 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
     networks:
       - sp
     restart: unless-stopped
@@ -66,9 +80,25 @@ services:
     container_name: sp-redis
     ports:
       - "6379:6379"
-    command: redis-server --requirepass ${PASSWORD}
+    command: >
+      redis-server
+      --requirepass ${PASSWORD}
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
     volumes:
       - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
     networks:
       - sp
     restart: unless-stopped
@@ -92,6 +122,12 @@ services:
       interval: 15s
       timeout: 10s
       retries: 5
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
     networks:
       - sp
     restart: unless-stopped
@@ -104,6 +140,17 @@ services:
     volumes:
       - mongo-data:/data/db
       - mongo-config:/data/configdb
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
     networks:
       - sp
     restart: unless-stopped
@@ -114,9 +161,16 @@ services:
     ports:
       - "8080:80"
     volumes:
-      - nginx-config:/etc/nginx:ro
-      - nginx-html:/usr/share/nginx/html  # 需可写：否则无法在其下为 imgs 创建子挂载点（会报 read-only file system）
-      - ./html/imgs:/usr/share/nginx/html/imgs:ro  # 宿主机项目 html/imgs，与 sp-app 共享同一份图片
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./html:/usr/share/nginx/html  # 宿主机 html 目录（包含前端 index.html/assets 与 imgs 图片）
+    depends_on:
+      - sp-app
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
     networks:
       - sp
     restart: unless-stopped
@@ -129,36 +183,35 @@ services:
     environment:
       ELASTICSEARCH_HOSTS: "http://sp-es:9200"
     depends_on:
-      - sp-es
+      sp-es:
+        condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
     networks:
       - sp
     restart: unless-stopped
 
 # ========== 持久化卷 ==========
-# 使用之前已存在的命名卷，保留历史数据
+# 统一使用明确命名的命名卷：既可复用已有历史数据，又能在新环境部署时自动创建
 volumes:
   mysql-data:
     name: sp-mysql-data
-    external: true
   redis-data:
     name: sp-redis-data
-    external: true
   es-data:
     name: sp-es-data
-    external: true
   mongo-data:
     name: sp-mongodb-data
-    external: true
   mongo-config:
     name: sp-mongo-config
-  nginx-config:
-    name: sp-nginx-config
-    external: true
-  nginx-html:
-    name: sp-nginx-html
-    external: true
 
 # ========== 网络 ==========
 networks:
   sp:
     driver: bridge
+
+
+

@@ -26,6 +26,7 @@ import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
 import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
 
 import java.security.Principal;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
@@ -43,7 +44,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
     private final UserMapper userMapper;
     private final RedisTemplate<String, Object> redisTemplate;
 
-    @Value("${cors.allowed-origin:http://127.0.0.1:5173}")
+    @Value("${cors.allowed-origin:http://127.0.0.1:5173,http://127.0.0.1:8080,http://localhost:5173,http://localhost:8080}")
     private String allowedOrigin;
 
     @Override
@@ -56,8 +57,12 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
+        String[] origins = Arrays.stream(allowedOrigin.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .toArray(String[]::new);
         registry.addEndpoint("/ws")
-                .setAllowedOriginPatterns(allowedOrigin)
+                .setAllowedOriginPatterns(origins)
                 .withSockJS();
     }
 

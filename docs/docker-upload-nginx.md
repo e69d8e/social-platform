@@ -112,25 +112,32 @@ int d2 = (name.hashCode() >> 4) & 0xF;          // 二级目录 0~f
 
 ---
 
-## 5. Nginx 配置（存放在 `sp-nginx-config` 外部卷）
+## 5. Nginx 配置（已内置在项目 `nginx/` 目录）
 
-注意：**仓库里没有 nginx 配置文件**，配置只存在于命名卷 `sp-nginx-config`，挂载为 `/etc/nginx:ro`。当前卷内配置：
+Nginx 配置文件已直接纳入 Git 版本管理（`nginx/nginx.conf` 与 `nginx/conf.d/default.conf`），在任何新电脑上克隆代码后直接 `docker compose up -d` 即可生效。
+
+核心配置摘要（`nginx/conf.d/default.conf`）：
 
 ```nginx
 upstream sp-app {
-    # ⚠️ 当前指向宿主机——配合"应用跑宿主机"的混合模式
-    server host.docker.internal:8081 max_fails=5 fail_timeout=10s weight=1;
+    server sp-app:8081;        # 容器间标准通信
+    keepalive 32;
 }
 
 server {
     listen 80;
+    server_name localhost;
+
+    # 客户端上传上限（与后端 10MB 保持一致）
+    client_max_body_size 10M;
 
     location / {              # 前端 SPA（dist 打包产物）
         root /usr/share/nginx/html;
+        index index.html;
         try_files $uri $uri/ /index.html;
     }
 
-    location /imgs {          # 图片静态服务（不经过后端）
+    location /imgs {          # 图片静态服务（不经过后端，高速直出）
         root /usr/share/nginx/html;
         try_files $uri =404;
         expires -1;
@@ -139,49 +146,55 @@ server {
 
     location /api {           # 接口反向代理到 Spring Boot
         rewrite /api(/.*) $1 break;   # 去掉 /api 前缀
-        proxy_pass http://sp-app;      # keepalive 长连接
-        client_max_body_size 10M;      # 与后端 10MB 上限一致
+        proxy_pass http://sp-app;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        client_max_body_size 10M;
+    }
+
+    location /ws {            # WebSocket 实时通信代理
+        proxy_pass http://sp-app;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "Upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_read_timeout 3600s;
     }
 }
 ```
 
-端口：nginx `8080→80`，应用 `8081`，MySQL `3306`，Redis `6379`，ES `9200`，Kibana `5601`，MongoDB `27017`。
+端口规划：Nginx `8080→80`，应用 `8081`，MySQL `3306`，Redis `6379`，ES `9200`，Kibana `5601`，MongoDB `27017`。
 
 ---
 
 ## 6. 两种运行模式对照
 
-| 维度 | 纯 Docker 模式（Jenkins 生产部署） | 当前本地混合模式（日常开发） |
+| 维度 | 纯 Docker 模式（生产部署 / 多机部署） | 本地混合开发模式（日常开发） |
 |---|---|---|
-| Spring Boot 位置 | `sp-app` 容器（Dockerfile 多阶段构建 → `SocialPlatform-0.0.1-SNAPSHOT.jar`） | 宿主机 IntelliJ / `mvn spring-boot:run`（`:8081`） |
-| `IMAGE_PATH` | `/usr/local/nginx/html/imgs`（容器内路径） | `/Users/li/Code/.../html/imgs`（宿主机绝对路径） |
-| nginx upstream | 应为 `sp-app:8081`（容器服务名） | `host.docker.internal:8081`（当前卷内配置） |
+| Spring Boot 位置 | `sp-app` 容器（Dockerfile 多阶段分层构建） | 宿主机 IntelliJ / `./mvnw spring-boot:run`（`:8081`） |
+| `IMAGE_PATH` | `/usr/local/nginx/html/imgs`（容器内路径） | 本地绝对路径 或 `./html/imgs` |
+| nginx upstream | `sp-app:8081`（默认） | 可在 `nginx/conf.d/default.conf` 临时切为 `host.docker.internal:8081` |
 | 图片落盘 | 经 bind mount 落到宿主机 `./html/imgs` | 直接写宿主机 `./html/imgs` |
-| 图片读 | nginx 容器内 bind mount（`:ro` 只读） | 同一个 nginx 容器，同样 bind mount |
-| 基础设施 | 全部容器化 | 同一个 docker compose 里的容器（**一直在跑**） |
-
-两种模式共用同一份 `./html/imgs`，切换模式**图片不丢失**。
+| 图片读取 | Nginx 容器内 bind mount（`:ro` 只读直出） | 同一个 Nginx 容器，同样 bind mount |
+| 权限处理 | `docker-entrypoint.sh` + `su-exec` 启动自动纠正权限 | 宿主机用户原生读写权限 |
 
 ---
 
-## 7. docker-compose 关键细节
+## 7. 部署到其他电脑时的核心检查清单（防踩坑必读）
 
-- **外部命名卷（`external: true`）**：`sp-mysql-data / sp-redis-data / sp-es-data / sp-mongodb-data / sp-nginx-config / sp-nginx-html` 全部保留历史数据，首次需手动 `docker volume create`；
-- **`sp-nginx-html` 对 nginx 必须可写**（不能加 `:ro`）：否则 Docker 无法在其下为 imgs 创建 bind mount 子挂载点，会报 `read-only file system`；
-- **sp-app 对 `nginx-html` 的 imgs 子目录用 bind mount 覆盖**（可写），nginx 侧对应 bind mount 加 `:ro`（只读，防篡改）；
-- MySQL 首次启动自动执行 `src/main/resources/social_platform.sql`（initdb 挂载）；
-- 依赖健康检查：MySQL / ES 用 `service_healthy` 门控 sp-app 启动；
-- `.dockerignore` 排除 `target/.git/html` 等，保证构建上下文干净；
-- Jenkinsfile：检出 → `./mvnw clean package` → `docker build` → `docker compose up -d sp-app`（**只重启应用容器，基础设施不动**），secret 从 Jenkins Credentials 注入 `.env`。
-
----
-
-## 8. 易踩的坑
-
-1. **nginx upstream 指向**：当前 `sp-nginx-config` 卷里的配置是 `host.docker.internal:8081`（混合模式专用）。若切到纯 Docker 跑 sp-app，需改成 `sp-app:8081` 并重载 nginx，否则 `/api` 全部 502。
-2. **改不了 nginx 配置**：配置在外置卷里，仓库里改不到；直接用 `docker cp` / 挂载出卷修改。
-3. **前端 dist 部署**：`sp-nginx-html` 卷里的 `assets/ + index.html` 是前端 `social_platform_vue` 打包后手动拷进去的，Java 侧 CI 不管它。
-4. **路由前缀**：前端所有请求走 `VITE_API_BASE_URL=http://127.0.0.1:8080/api`，nginx 靠 `rewrite /api(/.*) $1` 去掉前缀再转给应用；图片则必须走 `/imgs`协议（BASE_URL），二者别混。
-5. **上传大小上限两处**：nginx `client_max_body_size 10M` 和后端 `MAX_FILE_SIZE 10MB` 要同步改，只改一边就会被先挡住。
-6. **`html/imgs` 目录必须存在**：host 侧目录不存在时 bind mount 会由 root 自动创建，但应用启动自检日志会提示权限问题（当前运行用户是否有写权限）。
-7. **缓存策略**：`/imgs` 是 no-cache 而不是长缓存，因为图片可能按引用计数被物理删除；如果将来换成 hash 命名的永久图床，可以直接改成长期 `expires`。
+1. **宿主机文件读写权限（已通过 entrypoint 自愈）**：
+   - 在 Linux 机器上，Docker bind mount 默认可能以 root 创建目录。已通过 Dockerfile 中的 `su-exec` 与 `docker-entrypoint.sh` 在容器启动瞬间自动给 `spring` 用户分配写权限，杜绝了 `Permission Denied`。
+2. **`BASE_URL` 配置（跨机访问破图问题）**：
+   - 默认配置为 `http://127.0.0.1:8080/imgs`。
+   - 若部署到公网服务器或局域网其他电脑，**务必在 `.env` 中配置 `BASE_URL=http://<服务器IP或域名>:8080/imgs`**，否则其他客户端上传/访问图片时会请求客户端自身的 `127.0.0.1` 导致破图 404。
+3. **前端跨域 `CORS_ORIGIN`**：
+   - 在 `.env` 中添加允许访问的前端地址，例如 `CORS_ORIGIN=http://<前端IP>:5173,http://<前端IP>:8080`。
+4. **持久化卷声明**：
+   - `docker-compose.yml` 中已统一采用具名卷定义并移除了强制 `external: true`，全新电脑上执行 `docker compose up -d` 会自动创建所有数据卷，历史机器上部署则无缝继承既有卷数据。
+5. **上传文件大小限制**：
+   - Nginx（`client_max_body_size 10M`）与 Spring Boot（`max-file-size: 10MB`）已完全对齐。若后续需扩大上传限制，需同时修改 `application.yaml` 和 `nginx/conf.d/default.conf`。

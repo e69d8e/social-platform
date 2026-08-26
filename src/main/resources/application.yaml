@@ -74,4 +74,4 @@ jwt:
   refresh-expire: 604800000 # 7天
 
 cors:
-  allowed-origin: ${CORS_ORIGIN:http://127.0.0.1:5173,http://127.0.0.1:8080}
+  allowed-origin: ${CORS_ORIGIN:http://127.0.0.1:5173,http://127.0.0.1:8080,http://localhost:5173,http://localhost:8080}

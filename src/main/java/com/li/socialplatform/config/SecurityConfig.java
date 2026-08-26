@@ -29,7 +29,7 @@ public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
 
-    @Value("${cors.allowed-origin:http://127.0.0.1:5173,http://127.0.0.1:8080}")
+    @Value("${cors.allowed-origin:http://127.0.0.1:5173,http://127.0.0.1:8080,http://localhost:5173,http://localhost:8080}")
     private String allowedOrigin;
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
@@ -102,7 +102,7 @@ public class SecurityConfig {
             Arrays.stream(allowedOrigin.split(","))
                     .map(String::trim)
                     .filter(s -> !s.isEmpty())
-                    .forEach(config::addAllowedOrigin);
+                    .forEach(config::addAllowedOriginPattern);
             config.addAllowedMethod("*");
             config.addAllowedHeader("*");
             config.setAllowCredentials(true);
