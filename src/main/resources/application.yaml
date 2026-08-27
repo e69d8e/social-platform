@@ -5,7 +5,7 @@ spring:
     import: "optional:file:.env[.properties]"  # 自动读取项目根目录 .env，避免忘记 source（自定义 source 导入）
   # 数据库连接
   datasource:
-    url: jdbc:mysql://127.0.0.1:3306/social_platform?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://127.0.0.1:3306/social_platform?useUnicode=true&characterEncoding=UTF-8&useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
     username: root
     password: ${PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver

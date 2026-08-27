@@ -4,13 +4,14 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    image: sp-app:latest
     container_name: sp-app
     ports:
       - "8081:8081"
     environment:
       # Spring Boot 环境变量覆盖 application.yaml 中的地址
       # 容器间通过服务名通信，而非 127.0.0.1
-      SPRING_DATASOURCE_URL: "jdbc:mysql://sp-mysql:3306/social_platform?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true"
+      SPRING_DATASOURCE_URL: "jdbc:mysql://sp-mysql:3306/social_platform?useUnicode=true&characterEncoding=UTF-8&useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true"
       SPRING_DATA_REDIS_HOST: "sp-redis"
       SPRING_DATA_MONGODB_URI: "mongodb://sp-mongodb:27017/chat_memory_db"
       SPRING_ELASTICSEARCH_URIS: "http://sp-es:9200"
@@ -51,6 +52,7 @@ services:
       --character-set-server=utf8mb4
       --collation-server=utf8mb4_unicode_ci
       --default-time-zone=+08:00
+      --init-connect='SET NAMES utf8mb4'
     ports:
       - "3306:3306"
     environment:

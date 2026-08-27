@@ -36,5 +36,21 @@ logs/
 
 ### Environment ###
 .env
-# 本地图片存储目录
-/html/
+
+### OS generated files ###
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# 动态上传图片（忽略用户运行时上传的图片分片，保留系统默认头像与Logo基础资源）
+/html/imgs/*
+!/html/imgs/avatar/
+!/html/imgs/avatar/default.jpg
+!/html/imgs/logo.png
+
+
+

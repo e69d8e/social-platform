@@ -1,2 +1,9 @@
-/mvnw text eol=lf
-*.cmd text eol=crlf
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Ensure shell scripts and config files always use LF (preventing $'\r' command not found errors in Linux containers on Windows)
+*.sh text eol=lf
+Dockerfile text eol=lf
+docker-compose.yml text eol=lf
+*.conf text eol=lf
+*.sql text eol=lf

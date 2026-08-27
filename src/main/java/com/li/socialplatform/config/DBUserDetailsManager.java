@@ -37,9 +37,13 @@ public class DBUserDetailsManager implements UserDetailsService {
                 throw new UsernameNotFoundException("用户 " + username + " 的权限信息不存在");
             }
             log.info("用户角色：{}", authority);
+            String rawPassword = user.getPassword();
+            if (rawPassword != null && rawPassword.startsWith("{bcrypt}")) {
+                rawPassword = rawPassword.substring(8);
+            }
             // 构建 UserDetail 对象
             return org.springframework.security.core.userdetails.User.withUsername(user.getUsername()) //自定义用户名
-                    .password(user.getPassword()) //自定义密码
+                    .password(rawPassword) //自定义密码
                     .disabled(!user.getEnabled()) // 用户账号是否禁用
                     .accountExpired(!user.getEnabled()) // 用户凭证是否过期
                     .accountLocked(!user.getEnabled()) // 用户是否被锁定

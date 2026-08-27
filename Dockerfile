@@ -53,9 +53,9 @@ COPY --from=builder /build/extracted/spring-boot-loader/ ./
 COPY --from=builder /build/extracted/snapshot-dependencies/ ./
 COPY --from=builder /build/extracted/application/ ./
 
-# 复制容器入口脚本
+# 复制容器入口脚本并强制转换为 Unix LF 换行符（彻底防止 Windows CRLF 导致 no such file or directory 报错）
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh && chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # 暴露端口
 EXPOSE 8081
