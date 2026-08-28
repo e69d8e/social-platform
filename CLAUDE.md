@@ -5,6 +5,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Run
 
 ```bash
+# 1. Start middleware services + dev Nginx (routes to host port 8081)
+docker compose up -d sp-mysql sp-redis sp-es sp-mongodb sp-kibana sp-nginx-dev
+
+# 2. Build & run Spring Boot app
 ./mvnw compile          # Compile
 ./mvnw package          # Package as JAR
 ./mvnw spring-boot:run  # Start app on port 8081
@@ -12,9 +16,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ./mvnw test -Dtest=ClassName#methodName  # Run a single test
 ```
 
-Requires environment variables (see `.env.example`): `PASSWORD` (MySQL/Redis/JWT secret), `DEEPSEEK_API_KEY` (DeepSeek AI), `IMAGE_PATH` (Nginx static files directory for uploaded images). Optional: `CORS_ORIGIN` (default `http://127.0.0.1:5173`).
+Requires environment variables (see `.env.example`): `PASSWORD` (MySQL/Redis/JWT secret), `DEEPSEEK_API_KEY` (DeepSeek AI), `IMAGE_PATH` (Nginx static files directory for uploaded images). Optional: `CORS_ORIGIN` (default `http://127.0.0.1:5173,http://127.0.0.1:8080,http://localhost:5173,http://localhost:8080`).
 
-Dependencies: MySQL (3306), Redis (6379/db1), Elasticsearch (9200), MongoDB (27017).
+Dependencies: MySQL (3306), Redis (6379/db1), Elasticsearch (9200), MongoDB (27017), Kibana (5601), Nginx (8080).
 
 Database setup: `mysql -u root -p social_platform < src/main/resources/social_platform.sql`
 

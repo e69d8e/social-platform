@@ -205,21 +205,33 @@ docker compose ps
 
 ## 💻 本地日常开发模式（混合模式）
 
-日常编码时，推荐使用 Docker 运行中间件，在本地 IDE（IntelliJ IDEA）中直接运行 Spring Boot 应用：
+日常编码与断点调试时，推荐使用 Docker 运行中间件，在本地 IDE（IntelliJ IDEA）中直接运行 Spring Boot 应用。
+
+本项目内置了**双 Nginx 环境体系**，解决本地 IDEA 运行时 Nginx 无法跨容器转发到宿主机的问题：
+- **`sp-nginx`（全容器化/生产模式）**：反代目标为 `sp-app:8081` 容器，默认随 `docker compose up -d` 启动。
+- **`sp-nginx-dev`（本地 IDEA 开发模式）**：反代目标为 `host.docker.internal:8081`（宿主机本地 IDEA 运行的后端），无需修改前端代码或端口，前端页面（`8080`）、图片直出、WebSocket、API 文档均开箱即用。
+
+### 本地开发标准启动流程：
 
 ```bash
-# 1. 启动基础设施中间件（不启动容器内的 sp-app）
-docker compose up -d sp-mysql sp-redis sp-es sp-mongodb sp-kibana sp-nginx
+# 1. 启动基础设施中间件 + 本地开发版 Nginx（反向代理至宿主机 IDEA）
+docker compose up -d sp-mysql sp-redis sp-es sp-mongodb sp-kibana sp-nginx-dev
 
-# 2. 复制环境变量
+# 2. 复制环境变量（首次启动需配置）
 cp .env.example .env
 
-# 3. 宿主机运行 Spring Boot 应用（端口 8081）
+# 3. 宿主机在 IDEA 中直接点击 Debug/Run 运行 SocialPlatformApplication，或命令行运行：
 # Linux / macOS:
 ./mvnw spring-boot:run
 # Windows:
 .\mvnw.cmd spring-boot:run
 ```
+
+启动完成后，直接在浏览器访问 **`http://localhost:8080`** 即可进行全功能联调与断点调试！
+
+> 💡 **模式切换提示**：
+> - 从全容器模式切到本地 IDEA 模式：`docker compose stop sp-app sp-nginx && docker compose up -d sp-nginx-dev`
+> - 从本地 IDEA 模式切回全容器模式：`docker compose stop sp-nginx-dev && docker compose up -d sp-app sp-nginx`
 
 ---
 
@@ -280,9 +292,10 @@ social-platform/
 ├── docker-entrypoint.sh     # 容器启动自愈脚本（解决 Linux 挂载权限并降权运行）
 ├── .dockerignore            # 构建上下文过滤（排除本地大文件）
 ├── .env.example             # 环境变量模版
-├── nginx/                   # Nginx 配置文件（已纳入版本管理）
+├── nginx/                   # Nginx 配置文件（双环境配置体系）
 │   ├── nginx.conf           # 主配置文件（Gzip/日志/超时）
-│   └── conf.d/default.conf  # 路由网关配置（SPA/直出/反代/WS）
+│   ├── conf.d/default.conf  # 容器生产模式路由网关（反代至 sp-app:8081 容器）
+│   └── conf.dev.d/default.conf # 本地开发模式路由网关（反代至 host.docker.internal:8081 宿主机 IDEA）
 ├── html/                    # 宿主机挂载目录（前端静态文件与图片落盘）
 │   ├── index.html           # 前端 SPA 首页（已内置打包产物，开箱即用）
 │   ├── assets/              # 前端 JS/CSS 静态资源库（已内置打包产物）

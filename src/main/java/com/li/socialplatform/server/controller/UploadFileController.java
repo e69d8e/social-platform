@@ -77,18 +77,15 @@ public class UploadFileController {
     /** 头像宽高比 1:1 */
     private static final double AVATAR_ASPECT_RATIO = 1.0;
 
-    /** 帖子封面宽高比 5:3 */
-    private static final double POST_COVER_ASPECT_RATIO = 5.0 / 3.0;
-
     /** 宽高比允许误差（±2%，兼容轻微裁切偏差） */
     private static final double ASPECT_RATIO_TOLERANCE = 0.02;
 
     @PostMapping("/post")
-    @Operation(summary = "上传帖子封面", description = "上传帖子封面（最大10MB，支持jpg/png/gif/webp等格式，宽高比须为5:3）")
+    @Operation(summary = "上传帖子图片", description = "上传帖子图片（最大10MB，支持jpg/png/gif/webp等格式，不限制宽高比）")
     public Result uploadBlogImage(
             @Parameter(description = "图片文件") @RequestParam("file") MultipartFile image,
             @Parameter(description = "帖子ID") @RequestParam("postId") Long postId) {
-        return upload(image, postId, POST_COVER_ASPECT_RATIO, "5:3");
+        return upload(image, postId, null, null);
     }
 
     @PostMapping("/avatar")
@@ -98,7 +95,7 @@ public class UploadFileController {
         return upload(image, null, AVATAR_ASPECT_RATIO, "1:1");
     }
 
-    private Result upload(MultipartFile image, Long postId, double targetRatio, String ratioLabel) {
+    private Result upload(MultipartFile image, Long postId, Double targetRatio, String ratioLabel) {
         try {
             if (image.isEmpty()) {
                 return Result.error("文件不能为空");
@@ -121,15 +118,17 @@ public class UploadFileController {
             // 获取文件bytes
             byte[] bytes = image.getBytes();
 
-            // 校验图片宽高比例（头像1:1，帖子封面5:3）
-            int[] dimensions = readImageDimensions(bytes);
-            if (dimensions == null) {
-                return Result.error("无法解析图片宽高，请上传有效的图片文件");
-            }
-            double actualRatio = (double) dimensions[0] / dimensions[1];
-            if (Math.abs(actualRatio - targetRatio) > targetRatio * ASPECT_RATIO_TOLERANCE) {
-                return Result.error(StrUtil.format("图片宽高比例须为{}，当前为{}×{}",
-                        ratioLabel, dimensions[0], dimensions[1]));
+            // 若指定了目标比例（如头像1:1），则校验图片宽高比例
+            if (targetRatio != null) {
+                int[] dimensions = readImageDimensions(bytes);
+                if (dimensions == null) {
+                    return Result.error("无法解析图片宽高，请上传有效的图片文件");
+                }
+                double actualRatio = (double) dimensions[0] / dimensions[1];
+                if (Math.abs(actualRatio - targetRatio) > targetRatio * ASPECT_RATIO_TOLERANCE) {
+                    return Result.error(StrUtil.format("图片宽高比例须为{}，当前为{}×{}",
+                            ratioLabel, dimensions[0], dimensions[1]));
+                }
             }
 
             // 计算文件的SHA256哈希值
@@ -255,17 +254,29 @@ public class UploadFileController {
             return Result.error("参数不能为空");
         }
 
-        // 校验当前用户是否为帖子作者
+        Long currentUserId = userIdUtil.getUserId();
+
+        // 校验当前用户是否为帖子作者（若帖子已发布入库）
         Post post = postMapper.selectById(postId);
-        if (post == null) {
-            return Result.error("帖子不存在");
-        }
-        if (!Objects.equals(post.getUserId(), userIdUtil.getUserId())) {
+        if (post != null && !Objects.equals(post.getUserId(), currentUserId)) {
             return Result.error("没有权限删除该帖子的文件");
         }
+
         List<com.li.socialplatform.pojo.entity.File> currentFiles = fileMapper.selectList(
                 new LambdaQueryWrapper<com.li.socialplatform.pojo.entity.File>()
                         .eq(com.li.socialplatform.pojo.entity.File::getPostId, postId));
+
+        if (currentFiles.isEmpty()) {
+            return Result.ok();
+        }
+
+        // 校验这些文件是否为当前登录用户上传（防止越权删除未发布帖子的图片）
+        boolean hasUnauthorizedFile = currentFiles.stream()
+                .anyMatch(f -> !Objects.equals(f.getUserId(), currentUserId));
+        if (hasUnauthorizedFile) {
+            return Result.error("没有权限删除该帖子的文件");
+        }
+
         fileMapper.delete(new LambdaQueryWrapper<com.li.socialplatform.pojo.entity.File>()
                 .eq(com.li.socialplatform.pojo.entity.File::getPostId, postId));
 

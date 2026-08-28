@@ -157,6 +157,7 @@ services:
       - sp
     restart: unless-stopped
 
+  # 生产 / 容器全量模式 Nginx（反向代理至 sp-app 容器）
   sp-nginx:
     image: nginx:stable-alpine
     container_name: sp-nginx
@@ -168,6 +169,29 @@ services:
       - ./html:/usr/share/nginx/html  # 宿主机 html 目录（包含前端 index.html/assets 与 imgs 图片）
     depends_on:
       - sp-app
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+    networks:
+      - sp
+    restart: unless-stopped
+
+  # 本地开发 / IDEA 调试模式 Nginx（反向代理至宿主机 IDEA 运行的 8081 服务）
+  sp-nginx-dev:
+    image: nginx:stable-alpine
+    container_name: sp-nginx-dev
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/conf.dev.d:/etc/nginx/conf.d:ro
+      - ./html:/usr/share/nginx/html  # 宿主机 html 目录（包含前端 index.html/assets 与 imgs 图片）
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # 允许容器访问宿主机网络
+    profiles:
+      - dev
     logging:
       driver: "json-file"
       options:

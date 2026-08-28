@@ -27,9 +27,8 @@ Docker Compose 对静态资源和图片的挂载关系如下：
 | 服务/容器 | 挂载类型 | 宿主机路径 → 容器内路径 | 读写权限 | 作用 |
 |---|---|---|---|---|
 | **sp-app**（Spring Boot） | Bind Mount | `./html/imgs` → `/usr/local/nginx/html/imgs` | 读写 (`rw`) | 后端接收图片上传后直接落盘到此目录 |
-| **sp-nginx**（Nginx） | Bind Mount | `./html` → `/usr/share/nginx/html` | 读写 (`rw`) | 托管前端页面 (`/`) 及直出图片静态资源 (`/imgs`) |
-| **sp-nginx**（Nginx） | Bind Mount | `./nginx/nginx.conf` → `/etc/nginx/nginx.conf:ro` | 只读 (`ro`) | Nginx 全局主配置（gzip、上传上限等） |
-| **sp-nginx**（Nginx） | Bind Mount | `./nginx/conf.d` → `/etc/nginx/conf.d:ro` | 只读 (`ro`) | Nginx 站点虚拟主机与反代配置 |
+| **sp-nginx**（容器模式 Nginx） | Bind Mount | `./html` → `/usr/share/nginx/html`<br>`./nginx/nginx.conf` → `/etc/nginx/nginx.conf:ro`<br>`./nginx/conf.d` → `/etc/nginx/conf.d:ro` | 读写 (`rw`) / 只读 (`ro`) | 生产与全容器模式：托管前端与图片，反代至 `sp-app:8081` 容器 |
+| **sp-nginx-dev**（开发模式 Nginx） | Bind Mount | `./html` → `/usr/share/nginx/html`<br>`./nginx/nginx.conf` → `/etc/nginx/nginx.conf:ro`<br>`./nginx/conf.dev.d` → `/etc/nginx/conf.d:ro` | 读写 (`rw`) / 只读 (`ro`) | 本地 IDEA 开发模式：托管前端与图片，反代至 `host.docker.internal:8081` |
 
 #### 目录共享与挂载拓扑图
 
@@ -38,21 +37,25 @@ Docker Compose 对静态资源和图片的挂载关系如下：
 │
 ├── ./html/
 │   ├── index.html / assets/ ──┐
-│   └── imgs/ ──────┬──────────┼───────────────────────────────────────┐
-│                   │          │                                       │
-├── sp-app 容器 (8081)         │                                       │
-│     └── /usr/local/nginx/html/imgs (写图片)                          │
-│           ↑                                                          │
-│           └── [Bind Mount] ./html/imgs                               │
-│                                                                      │
-└── sp-nginx 容器 (8080→80)                                            │
-      └── /usr/share/nginx/html (读前端 / 读图片)                      │
-            ↑                                                          │
-            └── [Bind Mount] ./html ───────────────────────────────────┘
+│   └── imgs/ ──────┬──────────┼────────────────────────────────────────────────────────┐
+│                   │          │                                                        │
+├── sp-app 容器 (8081)         │                                                        │
+│     └── /usr/local/nginx/html/imgs (写图片)                                           │
+│           ↑                                                                           │
+│           └── [Bind Mount] ./html/imgs                                                │
+│                                                                                       │
+├── 【容器模式】sp-nginx 容器 (8080→80)                                                  │
+│     ├── 挂载 ./nginx/conf.d (upstream sp-app:8081)                                    │
+│     └── /usr/share/nginx/html (读前端 / 读图片) ───────────────────────────────────────┤
+│                                                                                       │
+└── 【本地模式】sp-nginx-dev 容器 (8080→80)                                              │
+      ├── 挂载 ./nginx/conf.dev.d (upstream host.docker.internal:8081)                   │
+      └── /usr/share/nginx/html (读前端 / 读图片) ───────────────────────────────────────┘
 ```
 
 **关键设计优势**：
-- **零拷贝与实时生效**：`sp-app` 将图片写入 `/usr/local/nginx/html/imgs` 时，文件即刻落盘在宿主机的 `./html/imgs`，`sp-nginx` 挂载的 `/usr/share/nginx/html/imgs` 瞬间可见，无需任何文件拷贝或网络同步。
+- **双 Nginx 环境无缝切换**：全容器模式（`sp-nginx`）反代容器内部 `sp-app`，本地开发模式（`sp-nginx-dev`）反代宿主机 IDEA 进程（`host.docker.internal:8081`），端口（`8080`）与业务路径保持 100% 一致，前端完全无感。
+- **零拷贝与实时生效**：无论应用运行在容器还是本地 IDEA，图片均直接落盘在宿主机的 `./html/imgs`，Nginx 挂载的 `/usr/share/nginx/html/imgs` 瞬间可见，无需任何文件拷贝或网络同步。
 - **前端热部署**：前端构建产物（`dist` 中的文件）直接放入宿主机 `./html` 目录即可即时生效，无需重启 Nginx 容器。
 - **后端隔离与最小权限**：`sp-app` 只挂载 `./html/imgs` 子目录，无需也无法访问前端 HTML/JS 静态代码，职责清晰安全。
 
@@ -90,7 +93,7 @@ Docker Compose 对静态资源和图片的挂载关系如下：
 | 空文件 | `image.isEmpty()` | 拦截空文件请求 |
 | 大小限制 | 最大 **10MB**（`MAX_FILE_SIZE`） | 与 Nginx `client_max_body_size 10M` 完全对齐 |
 | 扩展名白名单 | `jpg / jpeg / png / gif / bmp / webp` | 限制合法图片后缀 |
-| 宽高比例 | 头像 **1:1**、帖子封面 **5:3**（±2% 容差） | 优先读取图片文件头（ImageReader）快速校验尺寸，避免完整解码的内存与 CPU 开销 |
+| 宽高比例 | 头像 **1:1**（±2% 容差），帖子图片无比例限制 | 仅在需校验比例时优先读取图片文件头（ImageReader）快速校验尺寸，避免完整解码的内存与 CPU 开销 |
 | 启动自检 | `@PostConstruct initUploadDir()` | 检查 `IMAGE_PATH` 目录是否存在且具备写权限，异常时输出明确 ERROR 日志 |
 
 ### 2.2 智能去重（SHA-256）
@@ -150,14 +153,14 @@ int d2 = (name.hashCode() >> 4) & 0xF;          // 二级目录 0~f (16个桶)
 
 ---
 
-## 5. Nginx 完整配置说明
+## 5. Nginx 双环境完整配置说明
 
-Nginx 配置已完整纳入 Git 仓库管理：
+Nginx 配置已完整纳入 Git 仓库管理，提供两种开箱即用的环境配置：
 - `nginx/nginx.conf`：主配置（Gzip、连接数、`client_max_body_size 10M`）
-- `nginx/conf.d/default.conf`：虚拟主机配置（反向代理、静态资源、WebSocket、API 文档）
+- `nginx/conf.d/default.conf`：**生产 / 容器全量模式**（反向代理至 `sp-app:8081` 容器）
+- `nginx/conf.dev.d/default.conf`：**本地 IDEA 开发模式**（反向代理至 `host.docker.internal:8081` 宿主机）
 
-核心配置（`nginx/conf.d/default.conf`）：
-
+### 5.1 生产/容器全量配置（`nginx/conf.d/default.conf`）
 ```nginx
 upstream sp-app {
     server sp-app:8081;
@@ -169,7 +172,6 @@ server {
     server_name localhost;
     charset utf-8;
 
-    # 客户端最大上传限制（与 Spring Boot 10MB 保持一致）
     client_max_body_size 10M;
 
     # 前端 SPA 静态页面
@@ -179,7 +181,7 @@ server {
         try_files $uri $uri/ /index.html;
     }
 
-    # 图片静态访问（直接通过 Nginx 高速响应，不经过后端）
+    # 图片静态直出（直接通过 Nginx 高速响应，不经过后端）
     location /imgs {
         root /usr/share/nginx/html;
         try_files $uri =404;
@@ -187,7 +189,7 @@ server {
         add_header Cache-Control "no-cache, must-revalidate";
     }
 
-    # 后端 REST 接口代理（去掉 /api 前缀）
+    # 后端 REST 接口代理（去 /api 前缀，转容器 sp-app）
     location /api {
         rewrite /api(/.*) $1 break;
         proxy_pass http://sp-app;
@@ -224,18 +226,88 @@ server {
 }
 ```
 
+### 5.2 本地 IDEA 开发配置（`nginx/conf.dev.d/default.conf`）
+```nginx
+upstream sp-app-dev {
+    server host.docker.internal:8081;
+    keepalive 32;
+}
+
+server {
+    listen 80;
+    server_name localhost;
+    charset utf-8;
+
+    client_max_body_size 10M;
+
+    # 前端 SPA 静态页面
+    location / {
+        root /usr/share/nginx/html;
+        index index.html;
+        try_files $uri $uri/ /index.html;
+    }
+
+    # 图片静态直出（直接读取宿主机挂载的 ./html/imgs）
+    location /imgs {
+        root /usr/share/nginx/html;
+        try_files $uri =404;
+        expires -1;
+        add_header Cache-Control "no-cache, must-revalidate";
+    }
+
+    # 后端 REST 接口代理（去 /api 前缀，转宿主机本地 IDEA）
+    location /api {
+        rewrite /api(/.*) $1 break;
+        proxy_pass http://sp-app-dev;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        client_max_body_size 10M;
+    }
+
+    # WebSocket 实时消息代理（转宿主机本地 IDEA）
+    location /ws {
+        proxy_pass http://sp-app-dev;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "Upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
+    # Knife4j API 文档支持
+    location ~* ^/(doc\.html|webjars|v3/api-docs|swagger-resources) {
+        proxy_pass http://sp-app-dev;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_http_version 1.1;
+    }
+}
+```
+
 ---
 
 ## 6. 两种运行模式对照
 
-| 维度 | 纯 Docker 容器化模式（生产部署 / 多机部署） | 本地混合开发模式（日常本地调试） |
+| 维度 | 纯 Docker 容器化模式（生产部署 / 多机部署） | 本地混合开发模式（IntelliJ IDEA 调试） |
 |---|---|---|
-| **Spring Boot 运行位置** | `sp-app` 容器（Dockerfile 多阶段镜像） | 本地 IDE / `./mvnw spring-boot:run`（端口 `8081`） |
-| **`IMAGE_PATH` 配置** | `/usr/local/nginx/html/imgs`（容器内挂载点） | 宿主机本地路径，如 `/Users/li/.../html/imgs` 或 `./html/imgs` |
+| **Spring Boot 运行位置** | `sp-app` 容器（Dockerfile 多阶段镜像） | 本地 IDEA / `./mvnw spring-boot:run`（端口 `8081`） |
+| **Nginx 服务名称** | `sp-nginx`（依赖 `sp-app`） | `sp-nginx-dev`（配置 `profiles: ["dev"]`） |
+| **Nginx 配置文件** | `nginx/conf.d/default.conf` | `nginx/conf.dev.d/default.conf` |
+| **Nginx upstream** | `sp-app:8081`（Docker 容器网络） | `host.docker.internal:8081`（宿主机网络） |
+| **启动命令** | `docker compose up -d` | `docker compose up -d sp-mysql sp-redis sp-es sp-mongodb sp-kibana sp-nginx-dev` |
+| **前端访问入口** | `http://<服务器IP>:8080` | `http://localhost:8080` |
+| **`IMAGE_PATH` 配置** | `/usr/local/nginx/html/imgs`（容器内挂载点） | 宿主机本地路径，如 `./html/imgs` |
 | **`BASE_URL` 配置** | `http://<服务器IP/域名>:8080/imgs` | `http://127.0.0.1:8080/imgs` |
-| **Nginx upstream** | `sp-app:8081` | 临时调试可通过 Nginx 反代宿主机（`host.docker.internal:8081`） |
-| **图片落盘机制** | 经 Bind Mount 写入宿主机 `./html/imgs` | 直接写入宿主机 `./html/imgs` |
-| **图片读取机制** | Nginx 容器通过 Bind Mount 读取 `./html/imgs` | 同一个 Nginx 容器，读取相同的宿主机目录 |
+| **图片落盘机制** | 经 Bind Mount 写入宿主机 `./html/imgs` | IDEA 后端直接写入宿主机 `./html/imgs` |
+| **图片读取机制** | `sp-nginx` 经 Bind Mount 读取 `./html/imgs` | `sp-nginx-dev` 经 Bind Mount 读取 `./html/imgs` |
 | **权限管理** | `docker-entrypoint.sh` + `su-exec spring` 启动自愈赋权 | 宿主机当前登录用户原生文件读写权限 |
 
 ---
