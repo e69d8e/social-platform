@@ -57,7 +57,7 @@ langchain4j:
 social-platform:
   system-constants:
     user-nickname-prefix: "u_"
-    image-upload-dir: "${IMAGE_PATH:}"
+    image-upload-dir: "${IMAGE_PATH:./html/imgs}"
     base-url: "${BASE_URL:http://127.0.0.1:8080/imgs}"
     default-page-size: 12
     max-page-size: 1

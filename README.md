@@ -134,6 +134,9 @@ PASSWORD=your_password_here
 # 必填项：DeepSeek API Key
 DEEPSEEK_API_KEY=your_deepseek_api_key_here
 
+# 图片上传落盘物理路径（本地 IDEA 开发保持默认相对路径 ./html/imgs；全容器部署由 compose 自动指定）
+IMAGE_PATH=./html/imgs
+
 # ⚠️ 远程/局域网部署必填：图片访问地址（本地单机测试保持 127.0.0.1 即可；跨机/服务器部署请填真实服务器 IP）
 BASE_URL=http://127.0.0.1:8080/imgs
 
@@ -228,6 +231,10 @@ cp .env.example .env
 ```
 
 启动完成后，直接在浏览器访问 **`http://localhost:8080`** 即可进行全功能联调与断点调试！
+
+> 💡 **本地调试与图片落盘机制**：
+> - 本地开发时 `.env` 中的 `IMAGE_PATH=./html/imgs` 会指示 IDEA 运行的 Spring Boot 直接将图片存入当前工程下的 `./html/imgs` 目录。
+> - `sp-nginx-dev` 容器挂载了宿主机的 `./html` 目录，上传完成后可通过 `http://localhost:8080/imgs/...` 即时直出查看，无需拷贝任何文件。
 
 > 💡 **模式切换提示**：
 > - 从全容器模式切到本地 IDEA 模式：`docker compose stop sp-app sp-nginx && docker compose up -d sp-nginx-dev`
