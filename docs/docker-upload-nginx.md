@@ -228,17 +228,16 @@ server {
 
 ### 5.2 本地 IDEA 开发配置（`nginx/conf.dev.d/default.conf`）
 ```nginx
-upstream sp-app-dev {
-    server host.docker.internal:8081;
-    keepalive 32;
-}
-
 server {
     listen 80;
     server_name localhost;
     charset utf-8;
 
     client_max_body_size 10M;
+
+    # Docker 内置 DNS 动态解析，避免 Nginx 在启动时因同步解析 host.docker.internal 失败而崩溃
+    resolver 127.0.0.11 ipv6=off valid=10s;
+    set $sp_backend "http://host.docker.internal:8081";
 
     # 前端 SPA 静态页面
     location / {
@@ -257,8 +256,8 @@ server {
 
     # 后端 REST 接口代理（去 /api 前缀，转宿主机本地 IDEA）
     location /api {
-        rewrite /api(/.*) $1 break;
-        proxy_pass http://sp-app-dev;
+        rewrite ^/api/?(.*)$ /$1 break;
+        proxy_pass $sp_backend;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -270,7 +269,7 @@ server {
 
     # WebSocket 实时消息代理（转宿主机本地 IDEA）
     location /ws {
-        proxy_pass http://sp-app-dev;
+        proxy_pass $sp_backend;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "Upgrade";
@@ -283,7 +282,7 @@ server {
 
     # Knife4j API 文档支持
     location ~* ^/(doc\.html|webjars|v3/api-docs|swagger-resources) {
-        proxy_pass http://sp-app-dev;
+        proxy_pass $sp_backend;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
