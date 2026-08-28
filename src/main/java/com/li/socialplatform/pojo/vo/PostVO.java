@@ -24,6 +24,8 @@ public class PostVO implements Serializable {
     @JsonFormat(shape = JsonFormat.Shape.STRING)
     private Long userId;
 
+    private String username;
+
     private String title;
 
     private String content;

@@ -8,8 +8,10 @@ import com.li.socialplatform.common.utils.DataCacheUtil;
 import com.li.socialplatform.common.utils.UserIdUtil;
 import com.li.socialplatform.server.mapper.CommentMapper;
 import com.li.socialplatform.server.mapper.PostMapper;
+import com.li.socialplatform.server.mapper.UserMapper;
 import com.li.socialplatform.pojo.entity.Post;
 import com.li.socialplatform.pojo.entity.Result;
+import com.li.socialplatform.pojo.entity.User;
 import com.li.socialplatform.pojo.vo.PostVO;
 import com.li.socialplatform.server.repository.PostElasticsearchRepository;
 import com.li.socialplatform.server.service.IReviewerService;
@@ -39,6 +41,7 @@ import java.util.stream.Collectors;
 public class ReviewerServiceImpl implements IReviewerService {
 
     private final PostMapper postMapper;
+    private final UserMapper userMapper;
     private final RedisTemplate<String, Object> redisTemplate;
     private final UserIdUtil userIdUtil;
     private final CommentMapper commentMapper;
@@ -89,12 +92,28 @@ public class ReviewerServiceImpl implements IReviewerService {
         List<Long> ids = members.stream().map(member -> Long.valueOf(member.toString())).toList();
         // 批量查询帖子
         Map<Long, Post> postMap = new HashMap<>();
-        postMapper.selectBatchIds(ids).forEach(p -> postMap.put(p.getId(), p));
+        List<Post> posts = postMapper.selectBatchIds(ids);
+        posts.forEach(p -> postMap.put(p.getId(), p));
+
+        List<Long> userIds = posts.stream()
+                .map(Post::getUserId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        Map<Long, User> userMap = new HashMap<>();
+        if (!userIds.isEmpty()) {
+            userMapper.selectBatchIds(userIds).forEach(u -> userMap.put(u.getId(), u));
+        }
+
         List<PostVO> postVOS = new ArrayList<>();
         for (Long id : ids) {
             Post post = postMap.get(id);
             if (post == null) continue;
             PostVO postVO = BeanUtil.copyProperties(post, PostVO.class);
+            User author = userMap.get(post.getUserId());
+            if (author != null) {
+                postVO.setUsername(author.getUsername());
+            }
             postVO.setLikeCount(dataCacheUtil.getLikeCount(id));
             if (userId != null) {
                 postVO.setLiked(dataCacheUtil.isLiked(id, userId));
@@ -143,10 +162,24 @@ public class ReviewerServiceImpl implements IReviewerService {
 
         SearchHits<Post> hits = elasticsearchOperations.search(query, Post.class);
         long total = hits.getTotalHits();
+        List<Long> userIds = hits.stream()
+                .map(h -> h.getContent().getUserId())
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        Map<Long, User> userMap = new HashMap<>();
+        if (!userIds.isEmpty()) {
+            userMapper.selectBatchIds(userIds).forEach(u -> userMap.put(u.getId(), u));
+        }
+
         List<PostVO> postVOS = new ArrayList<>();
         for (SearchHit<Post> hit : hits) {
             Post post = hit.getContent();
             PostVO postVO = BeanUtil.copyProperties(post, PostVO.class);
+            User author = userMap.get(post.getUserId());
+            if (author != null) {
+                postVO.setUsername(author.getUsername());
+            }
             postVO.setLikeCount(dataCacheUtil.getLikeCount(post.getId()));
             postVO.setLiked(reviewerId != null && dataCacheUtil.isLiked(post.getId(), reviewerId));
             postVO.setEnabled(false);

@@ -54,9 +54,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
 
 import static com.li.socialplatform.common.constant.KeyConstant.TOKEN_BLACKLIST_KEY;
@@ -385,10 +383,24 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         if (posts.isEmpty()) {
             return Result.ok(List.of(), 0L);
         }
+        List<Long> userIds = posts.stream()
+                .map(Post::getUserId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        Map<Long, User> userMap = new HashMap<>();
+        if (!userIds.isEmpty()) {
+            userMapper.selectBatchIds(userIds).forEach(u -> userMap.put(u.getId(), u));
+        }
+
         List<PostVO> postVOS = new ArrayList<>();
         Long userId = userIdUtil.getUserId();
         for (Post post : posts) {
             PostVO postVO = BeanUtil.copyProperties(post, PostVO.class);
+            User author = userMap.get(post.getUserId());
+            if (author != null) {
+                postVO.setUsername(author.getUsername());
+            }
             if (userId == null) {
                 postVO.setLiked(false);
             } else {

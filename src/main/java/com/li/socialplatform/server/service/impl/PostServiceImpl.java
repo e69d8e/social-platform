@@ -287,11 +287,25 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
 
         SearchHits<Post> searchHits = elasticsearchTemplate.search(nativeQuery, Post.class);
 
+        List<Long> userIds = searchHits.stream()
+                .map(hit -> hit.getContent().getUserId())
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        Map<Long, User> userMap = new HashMap<>();
+        if (!userIds.isEmpty()) {
+            userMapper.selectBatchIds(userIds).forEach(u -> userMap.put(u.getId(), u));
+        }
+
         List<PostVO> postVOS = new ArrayList<>();
         long minTime = 0L;
         for (SearchHit<Post> hit : searchHits) {
             Post post = hit.getContent();
             PostVO postVO = BeanUtil.copyProperties(post, PostVO.class);
+            User author = userMap.get(post.getUserId());
+            if (author != null) {
+                postVO.setUsername(author.getUsername());
+            }
             postVO.setLikeCount(dataCacheUtil.getLikeCount(post.getId()));
             postVO.setLiked(dataCacheUtil.isLiked(post.getId(), userId));
             postVOS.add(postVO);
@@ -324,10 +338,11 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         List<Post> records = postIPage.getRecords();
         List<PostVO> postVOS = new ArrayList<>();
         Long userId = userIdUtil.getUserId();
-        List<Long> postIds = records.stream().map(Post::getId).toList();
-        // 批量获取点赞数和点赞状态（DataCacheUtil 内部已优化为批量查询）
+        User author = userMapper.selectById(id);
+        String username = author != null ? author.getUsername() : null;
         for (Post record : records) {
             PostVO postVO = BeanUtil.copyProperties(record, PostVO.class);
+            postVO.setUsername(username);
             postVO.setLikeCount(dataCacheUtil.getLikeCount(record.getId()));
             if (userId == null) {
                 postVO.setLiked(false);
@@ -488,7 +503,19 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
 
         // 批量查询帖子
         Map<Long, Post> postMap = new HashMap<>();
-        postMapper.selectBatchIds(ids).forEach(p -> postMap.put(p.getId(), p));
+        List<Post> posts = postMapper.selectBatchIds(ids);
+        posts.forEach(p -> postMap.put(p.getId(), p));
+
+        List<Long> userIds = posts.stream()
+                .filter(Post::getEnabled)
+                .map(Post::getUserId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        Map<Long, User> userMap = new HashMap<>();
+        if (!userIds.isEmpty()) {
+            userMapper.selectBatchIds(userIds).forEach(u -> userMap.put(u.getId(), u));
+        }
 
         List<PostVO> postVOS = new ArrayList<>();
         for (Long id : ids) {
@@ -497,6 +524,10 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
                 continue;
             }
             PostVO postVO = BeanUtil.copyProperties(post, PostVO.class);
+            User author = userMap.get(post.getUserId());
+            if (author != null) {
+                postVO.setUsername(author.getUsername());
+            }
             postVO.setLikeCount(dataCacheUtil.getLikeCount(id));
             if (userId == null) {
                 postVO.setLiked(false);
