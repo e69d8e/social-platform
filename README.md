@@ -2,6 +2,9 @@
 
 基于 Spring Boot 3 + Java 21 的全功能社交互动平台，支持帖子发布、关注流、点赞评论、私信聊天、全文检索、AI 智能助手（DeepSeek）与图片分片存储。
 
+- **后端仓库**：[social-platform](https://github.com/e69d8e/social-platform) (当前项目)
+- **前端项目**：[social_platform_vue](https://github.com/e69d8e/social_platform_vue) (Vue 3 + Vite + Element Plus + Pinia)
+
 ---
 
 ## 🛠️ 技术栈
@@ -138,13 +141,15 @@ BASE_URL=http://127.0.0.1:8080/imgs
 CORS_ORIGIN=http://127.0.0.1:5173,http://127.0.0.1:8080,http://localhost:5173,http://localhost:8080
 ```
 
-#### 步骤 3：（可选）放入前端静态文件
-本项目已自带打包好的前端资源。若您有定制前端产物，将编译生成的 `dist` 目录内所有文件放入 `./html/` 根目录下即可：
+#### 步骤 3：前端资源说明（开箱即用，已内置）
+> 💡 **已内置打包产物**：项目代码库中的 `html/` 目录下**已经自带完整编译打包好的前端静态资源**（包含 `html/index.html` 与 `html/assets/` 下的全部 JS/CSS 生产文件）。克隆项目后**无需安装 Node.js / pnpm 或执行任何前端构建命令**，启动 Docker 后即可直接通过浏览器访问完整功能的前端页面！
+
+若后续您需要对前端进行二次开发或定制，可前往前端源码仓库：[social_platform_vue](https://github.com/e69d8e/social_platform_vue)，修改后将编译生成的 `dist/` 产物覆盖至宿主机 `./html/` 目录下，刷新浏览器即可实时热更新生效：
 ```text
 html/
-├── index.html
-├── assets/
-└── favicon.ico
+├── index.html           # 前端 SPA 页面入口（已内置打包产物）
+├── assets/              # 前端 JS/CSS 静态资源库（已内置打包产物）
+└── imgs/                # 用户上传图片落盘存储目录
 ```
 
 #### 步骤 4：一键构建并后台启动所有服务
@@ -248,7 +253,7 @@ cp .env.example .env
 * **Windows WSL2 解决**：PowerShell 执行 `wsl -d docker-desktop sysctl -w vm.max_map_count=262144`。
 
 ### Q7: 如何更新前端页面或后端代码？
-* **更新前端**：重新打包生成 `dist` 后，直接覆盖到 `./html/` 目录，浏览器刷新即可，**无需重启任何容器**。
+* **更新前端**：在前端项目 [social_platform_vue](https://github.com/e69d8e/social_platform_vue) 中修改后执行打包（`npm run build`），将生成的 `dist` 产物直接覆盖到本项目的 `./html/` 目录，浏览器刷新即可，**无需重启任何容器**。
 * **更新后端代码**：
   ```bash
   # 利用 BuildKit 极速增量重构应用镜像（仅打包应用层，秒级完成）
@@ -278,12 +283,15 @@ social-platform/
 ├── nginx/                   # Nginx 配置文件（已纳入版本管理）
 │   ├── nginx.conf           # 主配置文件（Gzip/日志/超时）
 │   └── conf.d/default.conf  # 路由网关配置（SPA/直出/反代/WS）
-├── html/                    # 宿主机挂载目录
-│   ├── index.html           # 前端 SPA 首页（dist 产物）
-│   ├── assets/              # 前端打包静态资源
-│   └── imgs/                # 图片落盘存储目录（avatar/ 与 帖子封面）
+├── html/                    # 宿主机挂载目录（前端静态文件与图片落盘）
+│   ├── index.html           # 前端 SPA 首页（已内置打包产物，开箱即用）
+│   ├── assets/              # 前端 JS/CSS 静态资源库（已内置打包产物）
+│   └── imgs/                # 图片落盘存储目录（头像 avatar/ 与 帖子封面）
 ├── elasticsearch/           # Elasticsearch Docker 构建目录（集成 IK 中文分词）
 ├── docs/                    # 详细设计与架构说明文档
+│   ├── home-recommendation.md   # 首页推荐系统与推荐算法说明文档
+│   ├── docker-upload-nginx.md   # Docker 数据卷绑定与图片上传架构说明
+│   └── class-diagram.md         # 类图与领域模型关系
 └── src/                     # Spring Boot 源码与资源文件
 ```
 
