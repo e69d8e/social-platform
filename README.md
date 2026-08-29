@@ -41,24 +41,70 @@
 
 ## 🏗️ 架构设计
 
+> 🌟 **交互式架构全景图**：项目内置了由 Archify 渲染的**高层运行时架构交互式全景图**，直接在浏览器中打开本地文件 [`docs/architecture.html`](docs/architecture.html) 即可体验：
+> - 🎨 **多主题与视觉预设**：深色 / 浅色主题无缝切换，内置「经典 (Classic)」、「信号流 (Signal Flow)」、「工程蓝图 (Blueprint)」与「现场笔记 (Editorial)」4 种视觉渲染预设（按快捷键 `S` 循环切换）。
+> - 🧭 **引导故事视图 (Guided Views)**：内置 4 大业务引导章节（按 `[` / `]` 切换或 `P` 键自动播放演示）。
+> - 🔍 **语义雷达与路径探测**：支持任意节点检索（`/`）、组件间有向调用路径追踪（`R`）、语义透镜分类比对（`L`）与全景雷达地图（`M`）。
+> - 📐 **高清矢量导出**：支持一键导出高分辨率 PNG、无损 SVG 矢量图及 6 秒 WebM 动效。
+
+### 运行时架构拓扑
+
+```mermaid
+flowchart TB
+    subgraph ClientLayer["客户端与外部依赖"]
+        Client["Web 客户端<br/>(Vue 3 SPA)"]
+        DeepSeek["DeepSeek API<br/>(云端 LLM 推理服务)"]
+    end
+
+    subgraph DockerNet["Docker 容器编排网络 (sp bridge / 私有隔离网络)"]
+        subgraph GatewayGroup["统一网关与入口层"]
+            Nginx["Nginx 网关 (:8080 / :80)<br/>反向代理 & 静态资源直出"]
+            WS["WebSocket 消息网关<br/>(STOMP Broker :8081)"]
+        end
+
+        subgraph AppBoundary["应用核心与安全边界 (Internal :8081)"]
+            Security["安全与认证中心<br/>(Spring Security + JJWT + 滑动窗口限流)"]
+            App["社交核心服务<br/>(Spring Boot 3 + MyBatis-Plus)"]
+            AIAgent["AI 智能助理<br/>(LangChain4j 编排)"]
+        end
+
+        subgraph DataCluster["数据持久化与检索集群"]
+            MySQL[("MySQL 8.0<br/>主关系型数据库 :3306")]
+            Redis[("Redis 6.0<br/>分布式缓存 & 位图 :6379")]
+            ES[("Elasticsearch 9.2<br/>全文检索 + IK 分词 :9200")]
+            Mongo[("MongoDB 8.0<br/>AI 会话记忆库 :27017")]
+        end
+    end
+
+    Client -->|"HTTPS / WS"| Nginx
+    Nginx -->|"REST 代理 (/api)"| App
+    Nginx -->|"WS 升级连接 (/ws)"| WS
+    App -->|"安全过滤与鉴权"| Security
+    Security -->|"黑名单 / 滑动窗口"| Redis
+    App -->|"SQL 读写 (Lambda CRUD)"| MySQL
+    App -->|"IK 中文检索 / 高亮"| ES
+    App -->|"对话调度"| AIAgent
+    AIAgent -.->|"SSE 流式推理"| DeepSeek
+    AIAgent -->|"多轮上下文持久化"| Mongo
 ```
-┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│    MySQL     │     │    Redis     │     │Elasticsearch │
-│  持久化存储   │     │ 缓存 / 排行榜 │     │  全文搜索     │
-└──────┬───────┘     └──────┬───────┘     └──────┬───────┘
-       │                    │                     │
-       └────────────┬───────┘─────────────────────┘
-                    │
-           ┌────────┴────────┐
-           │  Spring Boot 3  │
-           │   SocialPlatform│
-           └────────┬────────┘
-                    │
-           ┌────────┴────────┐
-           │     MongoDB     │
-           │  AI 聊天记忆     │
-           └─────────────────┘
-```
+
+### 核心架构子系统与数据流向
+
+1. **核心业务主路径 (Core Request Path)**
+   - **请求链路**：`Web 客户端 (Vue 3 SPA)` $\rightarrow$ `Nginx 网关 (:8080)` $\rightarrow$ `社交核心服务 (:8081)` $\rightarrow$ `MySQL 8.0`。
+   - **业务职责**：客户端 SPA 发起 RESTful 请求，由 Nginx 反向代理转发至后端；MyBatis-Plus 全 Lambda 条件构造器完成核心表（用户、帖子、评论、关注）的高性能 CRUD；首页个性化推荐引擎结合用户兴趣评分矩阵与多维时间/热度衰减算法，实时计算推荐流。
+
+2. **安全防护与高速缓存 (Security & Cache System)**
+   - **防御链路**：`应用入口` $\rightarrow$ `Spring Security 拦截链` $\rightarrow$ `Redis 6.0`。
+   - **安全职责**：基于 JWT 双 Token（Access Token / Refresh Token）实现无状态鉴权，结合 Redis 实现黑名单快速吊销与滑动延期；集成行为滑块验证码阻断恶意撞库；自定义 `@RateLimit` 注解配合 Redis ZSet 滑动窗口算法，在 AOP 切面层实现防刷与接口限流。
+
+3. **网关分发与实时通信 (Gateway & Realtime Messaging)**
+   - **通信链路**：`Web 客户端` $\leftrightarrow$ `Nginx 网关` $\leftrightarrow$ `WebSocket STOMP Broker` $\rightarrow$ `社交核心服务`。
+   - **分发职责**：Nginx 挂载宿主机静态目录直出 Vue 3 前端产物与用户上传图片（`/imgs`），实现零业务容器开销；支持 STOMP over WebSocket 协议，Nginx 维持 HTTP `Upgrade` 长连接，实现毫秒级点对点私信推送与未读数实时同步；图片上传经 SHA-256 哈希计算实现物理去重与两级 16 进制目录分片存储。
+
+4. **智能 AI 与全文检索 (AI & Search Infrastructure)**
+   - **数据链路**：`社交核心服务` $\rightarrow$ `AI 智能助理 (LangChain4j)` $\leftrightarrow$ `DeepSeek API` / `MongoDB 8.0` / `Elasticsearch 9.2`。
+   - **检索与智能**：基于 LangChain4j 编排 DeepSeek-V4-Flash 大模型，利用 SSE（Server-Sent Events）打字机流式输出回答并异步提炼会话标题；多轮对话上下文与历史记录持久化至 MongoDB 文档数据库；Elasticsearch 9.2 集成 IK 中文分词插件，提供帖子正文、标签与用户名的中文模糊匹配与关键词高亮搜索。
 
 ---
 
@@ -309,6 +355,7 @@ social-platform/
 │   └── imgs/                # 图片落盘存储目录（头像 avatar/ 与 帖子封面）
 ├── elasticsearch/           # Elasticsearch Docker 构建目录（集成 IK 中文分词）
 ├── docs/                    # 详细设计与架构说明文档
+│   ├── architecture.html        # 高层运行时架构交互式图表（支持深浅色主题、蓝图/信号流模式、路径探索与动效导出）
 │   ├── home-recommendation.md   # 首页推荐系统与推荐算法说明文档
 │   ├── docker-upload-nginx.md   # Docker 数据卷绑定与图片上传架构说明
 │   └── class-diagram.md         # 类图与领域模型关系
