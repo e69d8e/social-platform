@@ -1,0 +1,1 @@
+import{$ as t}from"./index-DKOpwfGu.js";const n=e=>t.put(`/reviewer/post/${e}`),o=e=>t.get("/reviewer/post/ban",{params:e}),a=e=>t.get("/reviewer/post/ban/search",{params:e}),p=(e,r)=>t.delete(`/reviewer/comment/${e}/${r}`);export{n as b,p as d,o as g,a as s};

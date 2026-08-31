@@ -8,7 +8,7 @@ pipeline {
         // 从 Jenkins Credentials 中读取敏感信息
         PASSWORD        = credentials('sp-password')
         DEEPSEEK_API_KEY = credentials('sp-deepseek-api-key')
-        IMAGE_PATH      = '/usr/local/nginx/html/imgs'
+        HTML_PATH       = '/usr/local/nginx/html'
         NGINX_DIR       = '/usr/local/nginx'
     }
 
@@ -55,7 +55,7 @@ pipeline {
                     cat > .env <<EOF
 PASSWORD=${PASSWORD}
 DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
-IMAGE_PATH=${IMAGE_PATH}
+HTML_PATH=${HTML_PATH}
 NGINX_DIR=${NGINX_DIR}
 CORS_ORIGIN=http://127.0.0.1:5173
 EOF

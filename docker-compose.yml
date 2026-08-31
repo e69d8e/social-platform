@@ -24,7 +24,7 @@ services:
       # JVM 参数
       JAVA_OPTS: "-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -XX:InitialRAMPercentage=50.0 -Dfile.encoding=UTF-8 -Djava.security.egd=file:/dev/./urandom"
     volumes:
-      - ./html/imgs:/usr/local/nginx/html/imgs  # 宿主机目录：与 sp-nginx 共享同一份图片
+      - ${HTML_PATH:-./html}/imgs:/usr/local/nginx/html/imgs  # 宿主机目录：与 sp-nginx 共享同一份图片
     depends_on:
       sp-mysql:
         condition: service_healthy
@@ -166,7 +166,7 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      - ./html:/usr/share/nginx/html  # 宿主机 html 目录（包含前端 index.html/assets 与 imgs 图片）
+      - ${HTML_PATH:-./html}:/usr/share/nginx/html  # 宿主机 html 目录（包含前端 index.html/assets 与 imgs 图片）
     depends_on:
       - sp-app
     logging:
@@ -187,7 +187,7 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/conf.dev.d:/etc/nginx/conf.d:ro
-      - ./html:/usr/share/nginx/html  # 宿主机 html 目录（包含前端 index.html/assets 与 imgs 图片）
+      - ${HTML_PATH:-./html}:/usr/share/nginx/html  # 宿主机 html 目录（包含前端 index.html/assets 与 imgs 图片）
     extra_hosts:
       - "host.docker.internal:host-gateway"  # 允许容器访问宿主机网络
     profiles:

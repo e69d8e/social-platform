@@ -26,9 +26,9 @@ Docker Compose 对静态资源和图片的挂载关系如下：
 
 | 服务/容器 | 挂载类型 | 宿主机路径 → 容器内路径 | 读写权限 | 作用 |
 |---|---|---|---|---|
-| **sp-app**（Spring Boot） | Bind Mount | `./html/imgs` → `/usr/local/nginx/html/imgs` | 读写 (`rw`) | 后端接收图片上传后直接落盘到此目录 |
-| **sp-nginx**（容器模式 Nginx） | Bind Mount | `./html` → `/usr/share/nginx/html`<br>`./nginx/nginx.conf` → `/etc/nginx/nginx.conf:ro`<br>`./nginx/conf.d` → `/etc/nginx/conf.d:ro` | 读写 (`rw`) / 只读 (`ro`) | 生产与全容器模式：托管前端与图片，反代至 `sp-app:8081` 容器 |
-| **sp-nginx-dev**（开发模式 Nginx） | Bind Mount | `./html` → `/usr/share/nginx/html`<br>`./nginx/nginx.conf` → `/etc/nginx/nginx.conf:ro`<br>`./nginx/conf.dev.d` → `/etc/nginx/conf.d:ro` | 读写 (`rw`) / 只读 (`ro`) | 本地 IDEA 开发模式：托管前端与图片，反代至 `host.docker.internal:8081` |
+| **sp-app**（Spring Boot） | Bind Mount | `${HTML_PATH:-./html}/imgs` → `/usr/local/nginx/html/imgs` | 读写 (`rw`) | 后端接收图片上传后直接落盘到此目录 |
+| **sp-nginx**（容器模式 Nginx） | Bind Mount | `${HTML_PATH:-./html}` → `/usr/share/nginx/html`<br>`./nginx/nginx.conf` → `/etc/nginx/nginx.conf:ro`<br>`./nginx/conf.d` → `/etc/nginx/conf.d:ro` | 读写 (`rw`) / 只读 (`ro`) | 生产与全容器模式：托管前端与图片，反代至 `sp-app:8081` 容器 |
+| **sp-nginx-dev**（开发模式 Nginx） | Bind Mount | `${HTML_PATH:-./html}` → `/usr/share/nginx/html`<br>`./nginx/nginx.conf` → `/etc/nginx/nginx.conf:ro`<br>`./nginx/conf.dev.d` → `/etc/nginx/conf.d:ro` | 读写 (`rw`) / 只读 (`ro`) | 本地 IDEA 开发模式：托管前端与图片，反代至 `host.docker.internal:8081` |
 
 #### 目录共享与挂载拓扑图
 
@@ -94,7 +94,7 @@ Docker Compose 对静态资源和图片的挂载关系如下：
 | 大小限制 | 最大 **10MB**（`MAX_FILE_SIZE`） | 与 Nginx `client_max_body_size 10M` 完全对齐 |
 | 扩展名白名单 | `jpg / jpeg / png / gif / bmp / webp` | 限制合法图片后缀 |
 | 宽高比例 | 头像 **1:1**（±2% 容差），帖子图片无比例限制 | 仅在需校验比例时优先读取图片文件头（ImageReader）快速校验尺寸，避免完整解码的内存与 CPU 开销 |
-| 启动自检 | `@PostConstruct initUploadDir()` | 检查 `IMAGE_PATH` 目录是否存在且具备写权限，异常时输出明确 ERROR 日志 |
+| 启动自检 | `@PostConstruct initUploadDir()` | 检查 `imageUploadDir`（即 `${HTML_PATH}/imgs`）目录是否存在且具备写权限，异常时输出明确 ERROR 日志 |
 
 ### 2.2 智能去重（SHA-256）
 
@@ -117,9 +117,9 @@ int d2 = (name.hashCode() >> 4) & 0xF;          // 二级目录 0~f (16个桶)
 
 ### 2.4 落盘与入库
 
-- **物理存储路径**：`IMAGE_PATH`（通过 `application.yaml` 读取环境变量 `${IMAGE_PATH}`）
-  - **Docker 容器环境**：Compose 配置为 `/usr/local/nginx/html/imgs` → 经 Bind Mount 落到宿主机 `./html/imgs`。
-  - **本地开发环境**：`.env` 中配置宿主机绝对路径或 `./html/imgs` → 直接写宿主机目录。
+- **物理存储路径**：通过 `application.yaml` 读取 `${IMAGE_PATH:${HTML_PATH:./html}/imgs}`，默认直接落盘到 `${HTML_PATH}/imgs` 目录。
+  - **Docker 容器环境**：Compose 配置为容器内 `/usr/local/nginx/html/imgs` → 经 Bind Mount 落到宿主机 `${HTML_PATH:-./html}/imgs`。
+  - **本地开发环境**：`.env` 中配置 `HTML_PATH=./html`（或自定义路径） → 后端自动将图片写入 `${HTML_PATH}/imgs` 宿主机目录，无需单独配置 `IMAGE_PATH`。
 - **数据库记录**：向 MySQL `file` 表插入 `id / post_id / user_id / url / hash`（`url` 记录相对路径，如 `/9/a/ab12...jpg`）。
 - **接口返回 URL**：`BASE_URL + url`，例如 `http://127.0.0.1:8080/imgs/9/a/ab12...jpg`。
   - `BASE_URL` 环境变量默认 `http://127.0.0.1:8080/imgs`，必须指向 **Nginx 端口**，客户端不直连后端访问静态图片。
@@ -303,10 +303,10 @@ server {
 | **Nginx upstream** | `sp-app:8081`（Docker 容器网络） | `host.docker.internal:8081`（宿主机网络） |
 | **启动命令** | `docker compose up -d` | `docker compose up -d sp-mysql sp-redis sp-es sp-mongodb sp-kibana sp-nginx-dev` |
 | **前端访问入口** | `http://<服务器IP>:8080` | `http://localhost:8080` |
-| **`IMAGE_PATH` 配置** | `/usr/local/nginx/html/imgs`（容器内挂载点） | 宿主机本地路径，如 `./html/imgs` |
+| **`HTML_PATH` 配置** | `${HTML_PATH:-./html}`（挂载点 `${HTML_PATH}/imgs`） | 宿主机本地路径，如 `./html`（图片自动存入 `./html/imgs`） |
 | **`BASE_URL` 配置** | `http://<服务器IP/域名>:8080/imgs` | `http://127.0.0.1:8080/imgs` |
-| **图片落盘机制** | 经 Bind Mount 写入宿主机 `./html/imgs` | IDEA 后端直接写入宿主机 `./html/imgs` |
-| **图片读取机制** | `sp-nginx` 经 Bind Mount 读取 `./html/imgs` | `sp-nginx-dev` 经 Bind Mount 读取 `./html/imgs` |
+| **图片落盘机制** | 经 Bind Mount 写入宿主机 `${HTML_PATH:-./html}/imgs` | IDEA 后端直接写入宿主机 `${HTML_PATH}/imgs` |
+| **图片读取机制** | `sp-nginx` 经 Bind Mount 读取 `${HTML_PATH:-./html}/imgs` | `sp-nginx-dev` 经 Bind Mount 读取 `${HTML_PATH:-./html}/imgs` |
 | **权限管理** | `docker-entrypoint.sh` + `su-exec spring` 启动自愈赋权 | 宿主机当前登录用户原生文件读写权限 |
 
 ---

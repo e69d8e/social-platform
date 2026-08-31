@@ -60,11 +60,11 @@ public class UploadFileController {
     public void initUploadDir() {
         File dir = new File(systemConstants.imageUploadDir).getAbsoluteFile();
         if (!dir.exists() && !dir.mkdirs()) {
-            log.error("图片上传目录创建失败：{}，请检查 IMAGE_PATH 配置及目录权限", dir.getAbsolutePath());
+            log.error("图片上传目录创建失败：{}，请检查 HTML_PATH / IMAGE_PATH 配置及目录权限", dir.getAbsolutePath());
             return;
         }
         if (!dir.isDirectory()) {
-            log.error("图片上传目录不是一个目录：{}，请检查 IMAGE_PATH 配置", dir.getAbsolutePath());
+            log.error("图片上传目录不是一个目录：{}，请检查 HTML_PATH / IMAGE_PATH 配置", dir.getAbsolutePath());
             return;
         }
         if (!dir.canWrite()) {
@@ -165,7 +165,7 @@ public class UploadFileController {
             File parentDir = destFile.getParentFile();
             if (!parentDir.isDirectory() && !parentDir.mkdirs() && !parentDir.isDirectory()) {
                 log.error("创建图片存储目录失败：{}，当前运行用户无写权限", parentDir.getAbsolutePath());
-                return Result.error("图片保存失败：服务器上传目录无写权限，请联系管理员检查 IMAGE_PATH 目录权限");
+                return Result.error("图片保存失败：服务器上传目录无写权限，请联系管理员检查 HTML_PATH / IMAGE_PATH 目录权限");
             }
 
             log.info("保存文件到: {}", destFile.getAbsolutePath());
