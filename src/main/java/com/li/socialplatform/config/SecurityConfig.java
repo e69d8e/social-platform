@@ -65,14 +65,15 @@ public class SecurityConfig {
                                         ).permitAll() // 放行
                                         .requestMatchers(HttpMethod.GET, "/post/{id}", "/post/list",
                                                 "/post/follow/list", "/post/user/{id}", "/comment/{id}",
-                                                "/user/list/post", "/user/list/user").permitAll()
+                                                "/user/list/post", "/user/list/user", "/user/search-history").permitAll()
+                                        .requestMatchers(HttpMethod.POST, "/post/view/*").permitAll() // 放行记录浏览量
                                         .requestMatchers(HttpMethod.DELETE, "/post/{id}").authenticated()
                                         .requestMatchers(
                                                 "/admin/**"
                                         ).hasRole("ADMIN")
                                         .requestMatchers(
                                                 "/reviewer/**"
-                                        ).hasRole("REVIEWER")
+                                        ).hasAnyRole("ADMIN", "REVIEWER")
                                         .anyRequest() // 所有请求
                                         .authenticated() // 需要认证
                 )

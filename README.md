@@ -177,15 +177,22 @@ cd social-platform
 # 必填项：数据库与 Redis 密码（如 123456）
 PASSWORD=your_password_here
 
-# 必填项：DeepSeek API Key
-DEEPSEEK_API_KEY=your_deepseek_api_key_here
+# 必填项：AI 大模型（OpenAI 兼容接口）配置
+# 支持接入 DeepSeek、OpenAI、通义千问、SiliconFlow、OneAPI、Ollama 等任何 OpenAI 兼容大模型
+# 模型 API Key（例如前往 DeepSeek 开放平台申请：https://platform.deepseek.com/）
+OPENAI_API_KEY=your_api_key_here
+# 选填项：API Base URL（默认：https://api.deepseek.com，支持配置第三方中转代理、OneAPI 或兼容服务）
+OPENAI_BASE_URL=https://api.deepseek.com
+# 选填项：大模型名称（默认：deepseek-v4-flash，可指定为 deepseek-chat、gpt-4o 等）
+# 提示：接口格式遵循 OpenAI Chat Completions 标准协议（请求/响应/消息体格式详见下文 FAQ Q10）
+MODEL_NAME=deepseek-v4-flash
 
 # 前端静态资源与图片根目录（包含 index.html、assets 以及 imgs 图片子目录）
 # 本地 IDEA 开发与全容器部署默认使用相对路径 ./html；配置 HTML_PATH 后，图片存储目录自动为 ${HTML_PATH}/imgs
 HTML_PATH=./html
 
 # ⚠️ 远程/局域网部署必填：图片访问地址（本地单机测试保持 127.0.0.1 即可；跨机/服务器部署请填真实服务器 IP）
-BASE_URL=http://127.0.0.1:8080/imgs
+IMG_BASE_URL=http://127.0.0.1:8080/imgs
 
 # 允许跨域的前端地址（支持逗号分隔多个地址）
 CORS_ORIGIN=http://127.0.0.1:5173,http://127.0.0.1:8080,http://localhost:5173,http://localhost:8080
@@ -308,8 +315,8 @@ cp .env.example .env
   - CMD 中使用：`set DOCKER_BUILDKIT=1 && docker compose up -d --build`。
 
 ### Q4: 在其他电脑打开网页，上传图片后图片显示破图？
-* **原因**：`.env` 中的 `BASE_URL` 仍保持默认的 `127.0.0.1`，导致图片地址生成为 `http://127.0.0.1:8080/imgs/...`，外部设备访问时会尝试向其自身请求图片。
-* **解决**：在部署机器的 `.env` 中将 `BASE_URL` 改为 `http://<服务器真实公网或局域网IP>:8080/imgs`，然后重启应用容器：`docker compose restart sp-app`。
+* **原因**：`.env` 中的 `IMG_BASE_URL` 仍保持默认的 `127.0.0.1`，导致图片地址生成为 `http://127.0.0.1:8080/imgs/...`，外部设备访问时会尝试向其自身请求图片。
+* **解决**：在部署机器的 `.env` 中将 `IMG_BASE_URL` 改为 `http://<服务器真实公网或局域网IP>:8080/imgs`，然后重启应用容器：`docker compose restart sp-app`。
 
 ### Q5: 访问前端报跨域错误（CORS Policy Error）？
 * **解决**：在 `.env` 中的 `CORS_ORIGIN` 加上您访问前端所使用的完整 URL（例如 `http://192.168.1.100:8080`），后端已支持 `addAllowedOriginPattern` 通配匹配。
@@ -334,6 +341,103 @@ cp .env.example .env
 * **解决**：
   1. 本项目最新 `Dockerfile` 与 `.gitattributes` 已自动兼容并强制清理 CRLF 换行符。
   2. 重新构建启动即可：`docker compose up -d --build sp-app sp-nginx`。
+
+### Q10: 如何自定义 AI 助手的 API 接口地址与大模型（如使用中转代理、OpenAI 或其他开源大模型）？
+* **说明**：本项目底层基于 LangChain4j 的 OpenAI 兼容协议接入大语言模型，不仅支持 DeepSeek，还可接入通义千问、OpenAI、SiliconFlow、OneAPI、NewAPI 或本地 Ollama/vLLM 等任意兼容 OpenAI 规范的服务。
+* **环境变量配置**：只需在项目根目录 `.env` 中指定 `OPENAI_BASE_URL`、`OPENAI_API_KEY` 以及 `MODEL_NAME` 即可快速切换：
+  ```env
+  # 示例 1：接入 SiliconFlow 平台上的 DeepSeek-V3 模型
+  OPENAI_BASE_URL=https://api.siliconflow.cn
+  OPENAI_API_KEY=sk-xxxxxx
+  MODEL_NAME=deepseek-ai/DeepSeek-V3
+
+  # 示例 2：接入本地 Ollama 实例（OpenAI 兼容接口）
+  # OPENAI_BASE_URL=http://localhost:11434/v1
+  # OPENAI_API_KEY=ollama
+  # MODEL_NAME=deepseek-r1:8b
+  ```
+  修改后执行 `docker compose restart sp-app` 重启应用容器即可生效（本地 IDEA 开发模式下直接重新运行后端服务即可）。
+
+* **上游大模型 API 协议与数据格式规范**：
+  接入的第三方中转平台或自建模型服务必须遵循标准 **OpenAI Chat Completions 规范**，核心接口交互格式如下：
+
+  #### 1. 接口地址 (Chat Completion Endpoint)
+  * **请求路径**：`POST ${OPENAI_BASE_URL}/chat/completions`（LangChain4j 内部会自动在 base-url 后拼接 `/chat/completions`）。
+  * **请求头**：
+    * `Authorization: Bearer ${OPENAI_API_KEY}`
+    * `Content-Type: application/json`
+
+  #### 2. 请求体格式 (Chat Completion Request)
+  后端向大模型发送的请求体符合标准 JSON 结构，核心参数：
+  ```json
+  {
+    "model": "deepseek-v4-flash",
+    "messages": [
+      {
+        "role": "system",
+        "content": "你是「Y社区」的官方AI助手，代号小Y..."
+      },
+      {
+        "role": "user",
+        "content": "你好，请问社区有什么热门内容？"
+      },
+      {
+        "role": "assistant",
+        "content": "欢迎来到Y社区！你可以去 #生活# 话题逛逛～"
+      },
+      {
+        "role": "user",
+        "content": "怎么发帖呢？"
+      }
+    ],
+    "stream": true
+  }
+  ```
+  * **`model`** (String)：调用的模型标识，由 `.env` 的 `MODEL_NAME` 注入。
+  * **`messages`** (Array[Object])：多轮对话上下文历史记录（由 MongoDB 持久化提供），列表内每个 `message` 包含：
+    * **`role`** (String)：发送者角色：
+      * `system`：系统预设提示词（人设、社区指引与安全边界，加载自 `system-prompt.txt`）。
+      * `user`：当前登录用户发送的消息。
+      * `assistant`：大模型历史回复的内容。
+    * **`content`** (String)：对话的具体文本内容。
+  * **`stream`** (Boolean)：是否启用流式分块输出（主对话接口为 `true`，标题生成接口为 `false`）。
+
+  #### 3. 响应体格式 (Chat Completion Response)
+  系统包含两种场景的响应处理：
+  * **非流式响应 (Non-streaming Response)**：首次对话时触发 `TitleAssistant` 自动提炼不超过 20 字的会话标题（`stream: false`），期望返回完整 JSON：
+    ```json
+    {
+      "id": "chatcmpl-9abc123",
+      "object": "chat.completion",
+      "created": 1741700000,
+      "model": "deepseek-v4-flash",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "关于发帖与社区玩法的咨询"
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 58,
+        "completion_tokens": 12,
+        "total_tokens": 70
+      }
+    }
+    ```
+  * **流式响应 (Streaming SSE Response)**：主聊天助手 `Assistant` 的打字机交互（`stream: true`），响应头为 `Content-Type: text/event-stream`，上游服务端按 SSE 规范逐字分块输出增量 `delta` 数据帧，并在推流结束时发送 `data: [DONE]`：
+    ```text
+    data: {"id":"chatcmpl-9abc123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"在"},"finish_reason":null}]}
+
+    data: {"id":"chatcmpl-9abc123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"右上角"},"finish_reason":null}]}
+
+    data: {"id":"chatcmpl-9abc123","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"点击发帖"},"finish_reason":null}]}
+
+    data: [DONE]
+    ```
 
 ---
 

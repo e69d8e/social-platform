@@ -34,6 +34,9 @@ public class DataCacheUtil {
     // ==================== 点赞 ====================
 
     public boolean isLiked(Long postId, Long userId) {
+        if (postId == null || userId == null) {
+            return false;
+        }
         String key = KeyConstant.LIKE_KEY + postId;
         Boolean member = redisTemplate.opsForSet().isMember(key, userId);
         if (member != null) {
@@ -84,6 +87,9 @@ public class DataCacheUtil {
     // ==================== 关注 ====================
 
     public boolean isFollowed(Long userId, Long targetUserId) {
+        if (userId == null || targetUserId == null) {
+            return false;
+        }
         Double score = redisTemplate.opsForZSet().score(KeyConstant.Follow_LIST_KEY + userId, targetUserId);
         if (score != null) {
             return true;

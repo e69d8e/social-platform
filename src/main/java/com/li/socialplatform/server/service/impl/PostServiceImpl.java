@@ -36,6 +36,10 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
+
 import java.time.ZoneId;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
@@ -164,7 +168,7 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
             userIntersetScoreUtil.changeScore(userId, post.getCategoryId(), 1);
         }
         if (loginUser != null) {
-            if (!post.getEnabled() && !loginUser.getAuthorityId().equals(AuthorityConstant.REVIEWER)) {
+            if (!post.getEnabled() && !AuthorityConstant.REVIEWER.equals(loginUser.getAuthorityId()) && !AuthorityConstant.ADMIN.equals(loginUser.getAuthorityId())) {
                 return Result.error(MessageConstant.POST_NOT_EXIST);
             }
         } else {
@@ -325,10 +329,60 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
     public Result listFollowPosts(Long lastId, Integer offset) {
         // 获取当前用户
         Long userId = userIdUtil.getUserId();
+        if (userId == null) {
+            return Result.error(MessageConstant.USER_NOT_LOGIN);
+        }
+        String key = KeyConstant.POST_LIST_KEY + userId;
         Set<ZSetOperations.TypedTuple<Object>> typedTuples = redisTemplate.opsForZSet()
-                .reverseRangeByScoreWithScores(KeyConstant.POST_LIST_KEY + userId,
+                .reverseRangeByScoreWithScores(key,
                         0, lastId, offset, Long.parseLong(systemConstants.defaultPageSize));
+        if ((typedTuples == null || typedTuples.isEmpty()) && (offset == null || offset == 0)) {
+            loadFollowPostsToCache(userId);
+            typedTuples = redisTemplate.opsForZSet()
+                    .reverseRangeByScoreWithScores(key,
+                            0, lastId, offset != null ? offset : 0, Long.parseLong(systemConstants.defaultPageSize));
+        }
         return Result.ok(getScrollResult(typedTuples, userId));
+    }
+
+    private void loadFollowPostsToCache(Long userId) {
+        String key = KeyConstant.POST_LIST_KEY + userId;
+        List<UserInbox> inboxes = userInboxMapper.selectList(new LambdaQueryWrapper<UserInbox>()
+                .eq(UserInbox::getUserId, userId)
+                .orderByDesc(UserInbox::getCreateTime)
+                .last("LIMIT 50"));
+        if (!inboxes.isEmpty()) {
+            for (UserInbox inbox : inboxes) {
+                double score = inbox.getCreateTime() != null
+                        ? inbox.getCreateTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                        : (double) System.currentTimeMillis();
+                redisTemplate.opsForZSet().add(key, inbox.getPostId(), score);
+            }
+            return;
+        }
+        // 如果 inbox 为空，从 follow 关系查询关注的用户最近发布的帖子
+        Set<Object> followeeIds = redisTemplate.opsForZSet().range(KeyConstant.Follow_LIST_KEY + userId, 0, -1);
+        List<Long> targetIds = new ArrayList<>();
+        if (followeeIds != null && !followeeIds.isEmpty()) {
+            for (Object fId : followeeIds) {
+                try {
+                    targetIds.add(Long.valueOf(fId.toString()));
+                } catch (Exception ignored) {}
+            }
+        }
+        if (!targetIds.isEmpty()) {
+            List<Post> recentPosts = postMapper.selectList(new LambdaQueryWrapper<Post>()
+                    .in(Post::getUserId, targetIds)
+                    .eq(Post::getEnabled, true)
+                    .orderByDesc(Post::getCreateTime)
+                    .last("LIMIT 50"));
+            for (Post p : recentPosts) {
+                double score = p.getCreateTime() != null
+                        ? p.getCreateTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                        : (double) System.currentTimeMillis();
+                redisTemplate.opsForZSet().add(key, p.getId(), score);
+            }
+        }
     }
 
     @Override
@@ -423,8 +477,29 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         return fans.stream().map(fan -> Long.valueOf(fan.toString())).toList();
     }
 
+    private String getClientIp() {
+        try {
+            ServletRequestAttributes attributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+            if (attributes != null) {
+                HttpServletRequest request = attributes.getRequest();
+                String ip = request.getHeader("X-Forwarded-For");
+                if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
+                    ip = request.getHeader("X-Real-IP");
+                }
+                if (ip == null || ip.isEmpty() || "unknown".equalsIgnoreCase(ip)) {
+                    ip = request.getRemoteAddr();
+                }
+                if (ip != null && ip.contains(",")) {
+                    ip = ip.split(",")[0].trim();
+                }
+                return ip != null ? ip : "unknown";
+            }
+        } catch (Exception ignored) {}
+        return "unknown";
+    }
+
     /**
-     * 记录帖子浏览量，同一用户对同一帖子20秒内只计一次
+     * 记录帖子浏览量，同一用户/IP对同一帖子20秒内只计一次
      */
     @Override
     public Result recordView(Long postId) {
@@ -432,10 +507,8 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
             return Result.error(MessageConstant.ID_IS_NULL);
         }
         Long userId = userIdUtil.getUserId();
-        if (userId == null) {
-            return Result.error(MessageConstant.USER_NOT_LOGIN);
-        }
-        String cooldownKey = KeyConstant.POST_VIEW_COOLDOWN + userId + ":" + postId;
+        String identifier = userId != null ? "u:" + userId : "ip:" + getClientIp();
+        String cooldownKey = KeyConstant.POST_VIEW_COOLDOWN + identifier + ":" + postId;
         // 使用 setIfAbsent 原子操作，避免 hasKey + set 之间的竞态条件
         Boolean acquired = redisTemplate.opsForValue().setIfAbsent(cooldownKey, 1, 20, TimeUnit.SECONDS);
         if (!Boolean.TRUE.equals(acquired)) {

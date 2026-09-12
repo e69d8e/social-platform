@@ -16,7 +16,7 @@ docker compose up -d sp-mysql sp-redis sp-es sp-mongodb sp-kibana sp-nginx-dev
 ./mvnw test -Dtest=ClassName#methodName  # Run a single test
 ```
 
-Environment variables (see `.env.example`): `PASSWORD` (MySQL/Redis/JWT secret), `DEEPSEEK_API_KEY` (DeepSeek AI), `HTML_PATH` (Nginx static files root, images stored under `${HTML_PATH}/imgs`). Optional: `CORS_ORIGIN` (default `http://127.0.0.1:5173,http://127.0.0.1:8080,http://localhost:5173,http://localhost:8080`) and `BASE_URL` (image access prefix).
+Environment variables (see `.env.example`): `PASSWORD` (MySQL/Redis/JWT secret), `OPENAI_API_KEY` (AI model API key), `OPENAI_BASE_URL` (AI API base URL, default `https://api.deepseek.com`), `MODEL_NAME` (AI model name, default `deepseek-v4-flash`), `HTML_PATH` (Nginx static files root, images stored under `${HTML_PATH}/imgs`), `IMG_BASE_URL` (image access prefix, default `http://127.0.0.1:8080/imgs`). Optional: `CORS_ORIGIN` (default `http://127.0.0.1:5173,http://127.0.0.1:8080,http://localhost:5173,http://localhost:8080`).
 
 `spring.config.import: optional:file:.env[.properties]` is set in `application.yaml`, so Spring picks up `.env` automatically — no need to `source .env` before running.
 
@@ -102,7 +102,7 @@ Knife4j (OpenAPI) available at `http://localhost:8081/doc.html` when running.
 
 ### File Uploads
 
-`UploadFileController` handles post-image uploads. Images are stored as `SHA-256(content)` under `<HTML_PATH>/imgs/aa/bb/<hash>.jpg` (two-level hex sharding) so duplicate uploads dedupe on disk. Validates image dimensions/aspect-ratio via TwelveMonkeys ImageIO (supports WebP + CMYK JPEG). `DeleteFileUtil` cleans up orphaned files when a post is deleted. The `BASE_URL` env var is the public prefix prepended to the stored relative path.
+`UploadFileController` handles post-image uploads. Images are stored as `SHA-256(content)` under `<HTML_PATH>/imgs/aa/bb/<hash>.jpg` (two-level hex sharding) so duplicate uploads dedupe on disk. Validates image dimensions/aspect-ratio via TwelveMonkeys ImageIO (supports WebP + CMYK JPEG). `DeleteFileUtil` cleans up orphaned files when a post is deleted. The `IMG_BASE_URL` env var is the public prefix prepended to the stored relative path.
 
 ### Tests
 

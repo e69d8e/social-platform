@@ -23,6 +23,21 @@ public class UserVO implements Serializable {
     private String bio;
     private Integer gender;
     private Integer authorityId;
+    private String authority;
+
+    public String getAuthority() {
+        if (authority != null) {
+            return authority;
+        }
+        if (authorityId == null) {
+            return "USER";
+        }
+        return switch (authorityId) {
+            case 2 -> "ADMIN";
+            case 3 -> "REVIEWER";
+            default -> "USER";
+        };
+    }
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime createTime;
     private String nickname;

@@ -64,6 +64,6 @@ public class LikeServiceImpl extends ServiceImpl<LikeMapper, LikeRecord> impleme
         if (increment != null) {
             asyncTaskUtil.syncPostLikeCount(postId, increment.intValue());
         }
-        return Result.ok(MessageConstant.LIKE_SUCCESS, "");
+        return Result.ok(member ? MessageConstant.UN_LIKE_SUCCESS : MessageConstant.LIKE_SUCCESS, "");
     }
 }

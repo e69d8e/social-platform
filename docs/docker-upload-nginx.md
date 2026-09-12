@@ -121,8 +121,8 @@ int d2 = (name.hashCode() >> 4) & 0xF;          // 二级目录 0~f (16个桶)
   - **Docker 容器环境**：Compose 配置为容器内 `/usr/local/nginx/html/imgs` → 经 Bind Mount 落到宿主机 `${HTML_PATH:-./html}/imgs`。
   - **本地开发环境**：`.env` 中配置 `HTML_PATH=./html`（或自定义路径） → 后端自动将图片写入 `${HTML_PATH}/imgs` 宿主机目录，无需单独配置 `IMAGE_PATH`。
 - **数据库记录**：向 MySQL `file` 表插入 `id / post_id / user_id / url / hash`（`url` 记录相对路径，如 `/9/a/ab12...jpg`）。
-- **接口返回 URL**：`BASE_URL + url`，例如 `http://127.0.0.1:8080/imgs/9/a/ab12...jpg`。
-  - `BASE_URL` 环境变量默认 `http://127.0.0.1:8080/imgs`，必须指向 **Nginx 端口**，客户端不直连后端访问静态图片。
+- **接口返回 URL**：`IMG_BASE_URL + url`，例如 `http://127.0.0.1:8080/imgs/9/a/ab12...jpg`。
+  - `IMG_BASE_URL` 环境变量默认 `http://127.0.0.1:8080/imgs`，必须指向 **Nginx 端口**，客户端不直连后端访问静态图片。
 
 ---
 
@@ -146,7 +146,7 @@ int d2 = (name.hashCode() >> 4) & 0xF;          // 二级目录 0~f (16个桶)
 
 | 接口 | 鉴权与执行逻辑 |
 |---|---|
-| `DELETE /upload/delete?url=...` | 1. 校验 URL 前缀属于 `BASE_URL`、防止 `..` 路径遍历、校验规范化路径（Canonical Path）处于允许的图片根目录下；<br>2. 校验 `file.user_id == 当前登录用户`；<br>3. 物理删除文件并删除数据库记录。 |
+| `DELETE /upload/delete?url=...` | 1. 校验 URL 前缀属于 `IMG_BASE_URL`、防止 `..` 路径遍历、校验规范化路径（Canonical Path）处于允许的图片根目录下；<br>2. 校验 `file.user_id == 当前登录用户`；<br>3. 物理删除文件并删除数据库记录。 |
 | `DELETE /upload/delete/{postId}` | 1. 校验当前用户为帖子作者；<br>2. 删除该帖子在 `file` 表的所有记录；<br>3. **基于引用计数清理物理文件**：针对每张图的 hash 检查是否仍被其他帖子/用户引用，仅当 `count == 0` 时才真正执行物理删除（`FileUtil.del`）。 |
 
 由于物理文件位于宿主机 `./html/imgs` 目录，删除完成后 Nginx 再次收到该图片请求将立即返回 404，结合 `no-cache` 机制，前端不会残留旧图片显示。
@@ -304,7 +304,7 @@ server {
 | **启动命令** | `docker compose up -d` | `docker compose up -d sp-mysql sp-redis sp-es sp-mongodb sp-kibana sp-nginx-dev` |
 | **前端访问入口** | `http://<服务器IP>:8080` | `http://localhost:8080` |
 | **`HTML_PATH` 配置** | `${HTML_PATH:-./html}`（挂载点 `${HTML_PATH}/imgs`） | 宿主机本地路径，如 `./html`（图片自动存入 `./html/imgs`） |
-| **`BASE_URL` 配置** | `http://<服务器IP/域名>:8080/imgs` | `http://127.0.0.1:8080/imgs` |
+| **`IMG_BASE_URL` 配置** | `http://<服务器IP/域名>:8080/imgs` | `http://127.0.0.1:8080/imgs` |
 | **图片落盘机制** | 经 Bind Mount 写入宿主机 `${HTML_PATH:-./html}/imgs` | IDEA 后端直接写入宿主机 `${HTML_PATH}/imgs` |
 | **图片读取机制** | `sp-nginx` 经 Bind Mount 读取 `${HTML_PATH:-./html}/imgs` | `sp-nginx-dev` 经 Bind Mount 读取 `${HTML_PATH:-./html}/imgs` |
 | **权限管理** | `docker-entrypoint.sh` + `su-exec spring` 启动自愈赋权 | 宿主机当前登录用户原生文件读写权限 |
@@ -316,9 +316,9 @@ server {
 1. **宿主机挂载目录写权限自愈机制**：
    - 在 Linux 环境中，Docker Bind Mount 创建宿主机目录时默认所有者可能为 `root`。
    - `Dockerfile` 与 `docker-entrypoint.sh` 内置了 `su-exec`，容器启动阶段自动以 root 执行 `mkdir -p /usr/local/nginx/html/imgs` 并 `chown -R spring:spring`，随后以非 root 用户 `spring` 启动应用，彻底解决 `Permission Denied` 异常。
-2. **`BASE_URL` 配置与跨机访问（避免破图）**：
+2. **`IMG_BASE_URL` 配置与跨机访问（避免破图）**：
    - 默认值为 `http://127.0.0.1:8080/imgs`。
-   - 若部署到公网或局域网服务器，**必须在 `.env` 中修改为服务器真实 IP 或域名**（如 `BASE_URL=http://192.168.1.100:8080/imgs`），否则客户端上传图片后获取到的 URL 为 `127.0.0.1`，在其他设备上访问会出现 404 破图。
+   - 若部署到公网或局域网服务器，**必须在 `.env` 中修改为服务器真实 IP 或域名**（如 `IMG_BASE_URL=http://192.168.1.100:8080/imgs`），否则客户端上传图片后获取到的 URL 为 `127.0.0.1`，在其他设备上访问会出现 404 破图。
 3. **前端跨域 `CORS_ORIGIN`**：
    - 在 `.env` 中按需添加允许的前端域名/端口（如 `CORS_ORIGIN=http://192.168.1.100:5173,http://192.168.1.100:8080`）。
 4. **具名数据卷生命周期**：

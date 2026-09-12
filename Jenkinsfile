@@ -54,7 +54,10 @@ pipeline {
                     # 从 Jenkins Credentials 生成 .env 文件（不入库）
                     cat > .env <<EOF
 PASSWORD=${PASSWORD}
-DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+OPENAI_API_KEY=${OPENAI_API_KEY:-${DEEPSEEK_API_KEY}}
+OPENAI_BASE_URL=${OPENAI_BASE_URL:-https://api.deepseek.com}
+MODEL_NAME=${MODEL_NAME:-deepseek-v4-flash}
+IMG_BASE_URL=${IMG_BASE_URL:-http://127.0.0.1:8080/imgs}
 HTML_PATH=${HTML_PATH}
 NGINX_DIR=${NGINX_DIR}
 CORS_ORIGIN=http://127.0.0.1:5173

@@ -7,9 +7,12 @@ import com.li.socialplatform.common.constant.MessageConstant;
 import com.li.socialplatform.common.utils.AsyncTaskUtil;
 import com.li.socialplatform.common.utils.DataCacheUtil;
 import com.li.socialplatform.common.utils.UserIdUtil;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.li.socialplatform.server.mapper.FollowMapper;
+import com.li.socialplatform.server.mapper.PostMapper;
 import com.li.socialplatform.server.mapper.UserMapper;
 import com.li.socialplatform.pojo.entity.Follow;
+import com.li.socialplatform.pojo.entity.Post;
 import com.li.socialplatform.pojo.entity.Result;
 import com.li.socialplatform.pojo.entity.User;
 import com.li.socialplatform.pojo.vo.UserVO;
@@ -20,6 +23,7 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.stereotype.Service;
 
+import java.time.ZoneId;
 import java.util.*;
 
 /**
@@ -33,6 +37,7 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
 
     private final RedisTemplate<String, Object> redisTemplate;
     private final UserMapper userMapper;
+    private final PostMapper postMapper;
     private final UserIdUtil userIdUtil;
     private final AsyncTaskUtil asyncTaskUtil;
     private final DataCacheUtil dataCacheUtil;
@@ -71,14 +76,29 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
         // 将要关注用户的帖子查找出来
         Set<ZSetOperations.TypedTuple<Object>> typedTuples =
                 redisTemplate.opsForZSet().rangeWithScores(KeyConstant.POST_KEY + id, 0, -1);
+        String key = KeyConstant.POST_LIST_KEY + userId;
         if (typedTuples == null || typedTuples.isEmpty()) {
+            List<Post> posts = postMapper.selectList(new LambdaQueryWrapper<Post>()
+                    .eq(Post::getUserId, id)
+                    .eq(Post::getEnabled, true)
+                    .orderByDesc(Post::getCreateTime)
+                    .last("LIMIT 20"));
+            if (!posts.isEmpty()) {
+                String authorPostKey = KeyConstant.POST_KEY + id;
+                for (Post p : posts) {
+                    double score = p.getCreateTime() != null
+                            ? p.getCreateTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                            : (double) System.currentTimeMillis();
+                    redisTemplate.opsForZSet().add(authorPostKey, p.getId(), score);
+                    redisTemplate.opsForZSet().add(key, p.getId(), score);
+                }
+            }
             return Result.ok(MessageConstant.FOLLOW_SUCCESS, "");
         }
         List<Long> ids = typedTuples.stream()
                 .map(ZSetOperations.TypedTuple::getValue).map(String::valueOf).map(Long::valueOf).toList();
         List<Double> scores = typedTuples.stream()
                 .map(ZSetOperations.TypedTuple::getScore).toList();
-        String key = KeyConstant.POST_LIST_KEY + userId;
         for (int i = 0; i < ids.size(); i++) {
             redisTemplate.opsForZSet().add(key, ids.get(i), scores.get(i));
         }

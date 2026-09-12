@@ -58,8 +58,9 @@ public class ReviewerServiceImpl implements IReviewerService {
             return Result.error(MessageConstant.POST_NOT_EXIST);
         }
         Long reviewerId = userIdUtil.getUserId();
-        post.setEnabled(!post.getEnabled());
-        if (!post.getEnabled()) {
+        boolean wasEnabled = post.getEnabled();
+        post.setEnabled(!wasEnabled);
+        if (wasEnabled) {
             banCacheUtil.addBanPost(reviewerId, id);
         } else {
             banCacheUtil.removeBanPost(reviewerId, id);
@@ -67,7 +68,7 @@ public class ReviewerServiceImpl implements IReviewerService {
         postMapper.updateById(post);
         // 同步到Elasticsearch
         postElasticsearchRepository.save(post);
-        return Result.ok(MessageConstant.BAN_SUCCESS, "");
+        return Result.ok(wasEnabled ? MessageConstant.BAN_SUCCESS : MessageConstant.UNBAN_SUCCESS, "");
     }
 
     @Override

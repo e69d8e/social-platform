@@ -28,12 +28,14 @@ public class MessageConstant {
     public static final String TITLE_IS_NULL = "标题不能为空";
     public static final String DELETE_SUCCESS = "删除成功";
     public static final String PUBLISH_SUCCESS = "发布成功";
-    public static final String BAN_SUCCESS = "封禁/解封成功";
-    public static final String BAN_FAIL = "封禁/解封失败";
+    public static final String BAN_SUCCESS = "封禁成功";
+    public static final String UNBAN_SUCCESS = "解封成功";
+    public static final String BAN_FAIL = "封禁失败";
+    public static final String UNBAN_FAIL = "解封失败";
     public static final String SET_SUCCESS = "设置成功";
     public static final String SET_FAIL = "设置失败";
     public static final String FOLLOW_SUCCESS = "关注成功";
-    public static final String UN_FOLLOW_SUCCESS = "取消成功";
+    public static final String UN_FOLLOW_SUCCESS = "已取消关注";
     public static final String REGISTER_SUCCESS = "注册成功";
     public static final String TITLE_TOO_LONG = "标题过长";
     public static final String CONTENT_TOO_LONG = "内容过长";
@@ -41,7 +43,8 @@ public class MessageConstant {
     public static final String NICKNAME_ERROR = "昵称不能为空或者长度不能超过16";
     public static final String BIO_ERROR = "简介长度不能超过50";
     public static final String ADD_COMMENT_SUCCESS = "评论成功";
-    public static final String LIKE_SUCCESS = "点赞/取消成功";
+    public static final String LIKE_SUCCESS = "点赞成功";
+    public static final String UN_LIKE_SUCCESS = "已取消点赞";
     public static final String UPDATE_SUCCESS = "更新成功";
     public static final String USER_NOT_LOGIN = "用户未登录";
     public static final String USER_NOT_AUTHORIZED = "用户未授权";

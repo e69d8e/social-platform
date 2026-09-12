@@ -56,16 +56,17 @@ public class AdminServiceImpl implements IAdminService {
         if (user == null) {
             return Result.error(MessageConstant.USER_NOT_EXIST);
         }
-        if (user.getEnabled()) {
+        boolean wasEnabled = user.getEnabled();
+        if (wasEnabled) {
             banCacheUtil.addBanUser(userIdUtil.getUserId(), id);
         } else {
             banCacheUtil.removeBanUser(id);
         }
-        user.setEnabled(!user.getEnabled());
+        user.setEnabled(!wasEnabled);
         userMapper.updateById(user);
         // 同步到Elasticsearch
         userElasticsearchRepository.save(user);
-        return Result.ok(MessageConstant.BAN_SUCCESS, "");
+        return Result.ok(wasEnabled ? MessageConstant.BAN_SUCCESS : MessageConstant.UNBAN_SUCCESS, "");
     }
 
     @Override

@@ -52,5 +52,5 @@ Thumbs.db
 !/html/imgs/avatar/default.jpg
 !/html/imgs/logo.png
 
-
-
+# Playwright CLI
+.playwright-cli/
