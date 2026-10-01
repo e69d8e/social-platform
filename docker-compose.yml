@@ -254,6 +254,9 @@ services:
       ELASTICSEARCH_PASSWORD: "${PASSWORD}"
       # 限制 Kibana 内置 Node.js 堆，防止超出容器内存上限被 OOM Kill
       NODE_OPTIONS: "--max-old-space-size=768"
+      # Fleet 初始化要求启用加密对象（ESO）：由 PASSWORD 派生确定性密钥，任意非空密码均 ≥32 字符且重启后不变
+      XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY: "kibana-eso-enc-${PASSWORD}-kibana-eso-enc"
+      XPACK_ENCRYPTEDSAVEDOBJECTS_APIKEY: "kibana-eso-api-${PASSWORD}-kibana-eso-api"
     depends_on:
       sp-es:
         condition: service_healthy
