@@ -141,14 +141,36 @@ services:
       timeout: 10s
       retries: 5
       start_period: 30s
+    networks:
+      - sp
+    restart: unless-stopped
     logging:
       driver: "json-file"
       options:
         max-size: "50m"
         max-file: "3"
+
+  # ES 认证一次性初始化任务：Kibana 8/9 禁止使用 elastic 超级用户连接，
+  # 此处复用 sp-es 镜像内置 curl 为内置 kibana_system 用户设置密码（幂等，可重复执行）
+  sp-es-init:
+    image: sp-es:9.2.0-ik
+    container_name: sp-es-init
+    depends_on:
+      sp-es:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        echo "为 kibana_system 用户初始化密码..."
+        curl -fs -u "elastic:${PASSWORD}" -X PUT "http://sp-es:9200/_security/user/kibana_system/_password" \
+          -H "Content-Type: application/json" \
+          -d "{\"password\":\"${PASSWORD}\"}" \
+          && echo "kibana_system 密码初始化完成"
+    mem_limit: 128m
+    restart: "no"
     networks:
       - sp
-    restart: unless-stopped
 
   sp-mongodb:
     image: mongo:8.0.16
@@ -227,13 +249,16 @@ services:
       - "5601:5601"
     environment:
       ELASTICSEARCH_HOSTS: "http://sp-es:9200"
-      ELASTICSEARCH_USERNAME: "elastic"
+      # Kibana 8/9 禁用 elastic 超级用户连接，改用内置 kibana_system 用户（密码由 sp-es-init 任务设置）
+      ELASTICSEARCH_USERNAME: "kibana_system"
       ELASTICSEARCH_PASSWORD: "${PASSWORD}"
       # 限制 Kibana 内置 Node.js 堆，防止超出容器内存上限被 OOM Kill
       NODE_OPTIONS: "--max-old-space-size=768"
     depends_on:
       sp-es:
         condition: service_healthy
+      sp-es-init:
+        condition: service_completed_successfully
     mem_limit: 1g
     logging:
       driver: "json-file"

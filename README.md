@@ -238,7 +238,7 @@ html/
 ```bash
 docker compose ps
 ```
-所有容器状态显示为 `Up` 或 `healthy` 即表示全套服务就绪。
+所有容器状态显示为 `Up` 或 `healthy` 即表示全套服务就绪（`sp-es-init` 为一次性 ES 认证初始化任务，显示 `Exited (0)` 属正常）。
 
 ---
 
@@ -477,7 +477,7 @@ docker compose up -d sp-mysql sp-redis sp-es sp-mongodb sp-kibana sp-nginx-dev
 ```text
 social-platform/
 ├── Dockerfile               # 多阶段分层镜像构建（BuildKit 缓存加速 + 非 Root 安全运行）
-├── docker-compose.yml       # 全套 7 大服务容器编排与健康检查配置
+├── docker-compose.yml       # 全套 8 大服务容器编排与健康检查配置（含 ES 认证初始化一次性任务）
 ├── docker-entrypoint.sh     # 容器启动自愈脚本（解决 Linux 挂载权限并降权运行）
 ├── .dockerignore            # 构建上下文过滤（排除本地大文件）
 ├── .env.example             # 环境变量模版

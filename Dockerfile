@@ -1,5 +1,6 @@
-# syntax=docker/dockerfile:1
-
+# 说明：不使用 `# syntax=docker/dockerfile:1` 指令，避免构建时额外拉取语法前端镜像
+# （国内网络对 auth.docker.io 的 token 接口易超时导致构建失败；
+#   本文件仅使用 RUN --mount=type=cache，Docker 内置前端已稳定支持）
 # ========== 第一阶段：Maven 编译构建与分层提取 ==========
 FROM maven:3.9-eclipse-temurin-21-alpine AS builder
 
