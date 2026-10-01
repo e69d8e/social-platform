@@ -61,7 +61,9 @@ social-platform:
     base-url: "${IMG_BASE_URL:${IMAGE_BASE_URL:http://127.0.0.1:8080/imgs}}"
     default-page-size: 12
     max-page-size: 1
-    default-avatar: "${DEFAULT_AVATAR:http://127.0.0.1:8080/imgs/avatar/default.jpg}"
+    # 默认头像从 IMG_BASE_URL 派生，避免远程部署后仍生成 127.0.0.1 的头像地址；
+    # 如需完全自定义可显式设置 DEFAULT_AVATAR 环境变量覆盖
+    default-avatar: "${DEFAULT_AVATAR:${IMG_BASE_URL:${IMAGE_BASE_URL:http://127.0.0.1:8080/imgs}}/avatar/default.jpg}"
     title-max-length: 100
     content-max-length: 12000
     nickname-max-length: 16

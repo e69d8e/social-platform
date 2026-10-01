@@ -115,6 +115,7 @@ flowchart TB
 ### 1. 前置准备
 
 - 已安装 **Docker** 与 **Docker Compose**（推荐 Docker Desktop 4.0+ 或 Docker Engine 24.0+）。
+- **内存要求**：全套服务（Spring Boot + MySQL + Redis + Elasticsearch + MongoDB + Kibana + Nginx）建议宿主机至少 **4GB** 可用内存，推荐 **8GB**；2GB 小内存机器会因内存不足导致容器被 OOM 杀掉（通常是 ES 或 Kibana 先退出）。
 - **调整虚拟内存区域限制（满足 Elasticsearch 启动要求）**：
   - **Linux 服务器**：
     ```bash
@@ -145,6 +146,8 @@ flowchart TB
   - `5601`：（可选）Kibana 控制台
   - `8081`：（可选）Spring Boot 直连端口
 
+> ℹ️ **安全说明**：MySQL(`3306`) / Redis(`6379`) / Elasticsearch(`9200`) / MongoDB(`27017`) 等数据端口已在 `docker-compose.yml` 中绑定 `127.0.0.1` 回环地址，仅宿主机本地（含本地 IDEA 开发模式）可访问，**无需也无法在安全组放行**；如需远程管理请使用 SSH 隧道（例如 `ssh -L 3306:127.0.0.1:3306 user@server`）。由于 Kibana(5601) 与 Elasticsearch 均未启用认证，若保持 `5601` 对外，请在安全组中仅对可信 IP 放行。
+
 ---
 
 ### 2. 部署步骤
@@ -174,7 +177,9 @@ cd social-platform
 
 `.env` 核心配置说明：
 ```env
-# 必填项：数据库与 Redis 密码（如 123456）
+# 必填项：MySQL / Redis / JWT 共用密码
+# ⚠️ 建议 16 位以上字母数字组合；勿含空格、$、引号等特殊字符（会破坏 compose 命令解析）
+# ⚠️ MySQL 密码仅在数据卷首次初始化时写入：首次启动后修改 PASSWORD 需 `docker compose down -v` 重建（会清空数据），详见 FAQ Q11
 PASSWORD=your_password_here
 
 # 必填项：AI 大模型（OpenAI 兼容接口）配置
@@ -270,12 +275,14 @@ docker compose ps
 
 ### 本地开发标准启动流程：
 
-```bash
-# 1. 启动基础设施中间件 + 本地开发版 Nginx（反向代理至宿主机 IDEA）
-docker compose up -d sp-mysql sp-redis sp-es sp-mongodb sp-kibana sp-nginx-dev
+> 💡 **前置要求**：除 Docker 外，本机需安装 **JDK 21**（IDEA 运行与 `mvnw` 均依赖）。
 
-# 2. 复制环境变量（首次启动需配置）
+```bash
+# 1. 复制环境变量（必须先于第 2 步：MySQL / Redis 密码等均来自 .env，缺失会导致容器启动失败）
 cp .env.example .env
+
+# 2. 启动基础设施中间件 + 本地开发版 Nginx（反向代理至宿主机 IDEA）
+docker compose up -d sp-mysql sp-redis sp-es sp-mongodb sp-kibana sp-nginx-dev
 
 # 3. 宿主机在 IDEA 中直接点击 Debug/Run 运行 SocialPlatformApplication，或命令行运行：
 # Linux / macOS:
@@ -317,6 +324,11 @@ cp .env.example .env
 ### Q4: 在其他电脑打开网页，上传图片后图片显示破图？
 * **原因**：`.env` 中的 `IMG_BASE_URL` 仍保持默认的 `127.0.0.1`，导致图片地址生成为 `http://127.0.0.1:8080/imgs/...`，外部设备访问时会尝试向其自身请求图片。
 * **解决**：在部署机器的 `.env` 中将 `IMG_BASE_URL` 改为 `http://<服务器真实公网或局域网IP>:8080/imgs`，然后重启应用容器：`docker compose restart sp-app`。
+* **补充（默认头像）**：修改后**新上传图片与新注册用户**的默认头像地址会自动跟随 `IMG_BASE_URL`；但**种子演示账号**（`li`/`dufu` 等）的头像在数据库首次初始化时已写死 `127.0.0.1`，可在部署机上执行以下 SQL 一并修复：
+  ```bash
+  docker compose exec sp-mysql mysql -uroot -p"${PASSWORD}" social_platform \
+    -e "UPDATE user SET avatar = REPLACE(avatar, 'http://127.0.0.1:8080', 'http://<服务器IP>:8080') WHERE avatar LIKE 'http://127.0.0.1:8080/%';"
+  ```
 
 ### Q5: 访问前端报跨域错误（CORS Policy Error）？
 * **解决**：在 `.env` 中的 `CORS_ORIGIN` 加上您访问前端所使用的完整 URL（例如 `http://192.168.1.100:8080`），后端已支持 `addAllowedOriginPattern` 通配匹配。
@@ -438,6 +450,23 @@ cp .env.example .env
 
     data: [DONE]
     ```
+
+### Q11: 修改 `.env` 中的 `PASSWORD` 后，`sp-mysql` 一直 unhealthy，`sp-app` 起不来？
+* **原因**：`PASSWORD` 是 MySQL / Redis / JWT 三者共用的密码。MySQL root 密码仅在**首次初始化**（`sp-mysql-data` 数据卷为空）时写入，之后修改 `.env` 并不会同步到已有数据卷：MySQL 健康检查使用新密码连接失败 → `sp-mysql` 永远无法达到 `healthy` → `sp-app` 因 `depends_on: service_healthy` 条件不满足而不会启动。
+* **解决（清空重建）**：⚠️ 会删除全部数据卷（MySQL / Redis / ES / MongoDB 数据全部清空）：
+  ```bash
+  docker compose down -v
+  docker compose up -d --build
+  ```
+* **保留数据换密码**：先进入 MySQL 容器把 root 密码手动改为新值，再更新 `.env` 并重建容器：
+  ```bash
+  docker compose exec sp-mysql mysql -uroot -p"旧密码" \
+    -e "ALTER USER 'root'@'%' IDENTIFIED BY '新密码'; ALTER USER 'root'@'localhost' IDENTIFIED BY '新密码'; FLUSH PRIVILEGES;"
+  # 然后在 .env 中更新 PASSWORD 后执行：
+  docker compose up -d
+  ```
+  注意：Redis 密码随 `.env` 重启即生效；JWT 密钥变更会使所有已登录 Token 失效（用户需重新登录）。
+* **建议**：首次启动前就确定好最终密码；密码建议 16 位以上字母数字组合，勿含空格、`$`、引号等特殊字符（会被 compose 命令解析破坏）。
 
 ---
 
