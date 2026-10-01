@@ -4,13 +4,13 @@ import com.li.socialplatform.common.annotation.RateLimit;
 import com.li.socialplatform.common.constant.KeyConstant;
 import com.li.socialplatform.common.constant.MessageConstant;
 import com.li.socialplatform.common.exception.BizException;
+import com.li.socialplatform.common.utils.RedisUtil;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
 import org.aspectj.lang.reflect.MethodSignature;
-import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
@@ -18,6 +18,7 @@ import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.lang.reflect.Method;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
@@ -29,7 +30,7 @@ import java.util.concurrent.TimeUnit;
 @RequiredArgsConstructor
 public class RateLimitAspect {
 
-    private final StringRedisTemplate redisTemplate;
+    private final RedisUtil redisUtil;
 
     @Around("@annotation(rateLimit)")
     public Object around(ProceedingJoinPoint joinPoint, RateLimit rateLimit) throws Throwable {
@@ -40,19 +41,22 @@ public class RateLimitAspect {
         long now = System.currentTimeMillis();
         long windowStart = now - windowSeconds * 1000;
 
-        // 移除窗口外的过期数据
-        redisTemplate.opsForZSet().removeRangeByScore(key, 0, windowStart);
-
-        // 统计当前窗口内的请求数
-        Long count = redisTemplate.opsForZSet().size(key);
-        if (count != null && count >= maxRequests) {
+        // 移除窗口外的过期数据 + 统计当前窗口内的请求数，pipeline 合并为一次网络往返
+        List<Object> countResults = redisUtil.pipelineString(ops -> {
+            ops.opsForZSet().removeRangeByScore(key, 0, windowStart);
+            ops.opsForZSet().size(key);
+        });
+        Long count = countResults.size() > 1 && countResults.get(1) instanceof Long c ? c : 0L;
+        if (count >= maxRequests) {
             throw new BizException(MessageConstant.RATE_LIMIT_EXCEEDED);
         }
 
-        // 记录本次请求（时间戳 + UUID 作为 member，避免同毫秒碰撞）
+        // 记录本次请求（时间戳 + UUID 作为 member，避免同毫秒碰撞）+ 续期，pipeline 合并为一次网络往返
         String member = now + ":" + UUID.randomUUID().toString().substring(0, 8);
-        redisTemplate.opsForZSet().add(key, member, now);
-        redisTemplate.expire(key, windowSeconds * 2, TimeUnit.SECONDS);
+        redisUtil.pipelineString(ops -> {
+            ops.opsForZSet().add(key, member, now);
+            ops.expire(key, windowSeconds * 2, TimeUnit.SECONDS);
+        });
 
         return joinPoint.proceed();
     }

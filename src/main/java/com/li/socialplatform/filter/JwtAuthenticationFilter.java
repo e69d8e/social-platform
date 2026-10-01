@@ -1,8 +1,11 @@
 package com.li.socialplatform.filter;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.li.socialplatform.common.constant.CacheTtl;
 import com.li.socialplatform.common.constant.KeyConstant;
 import com.li.socialplatform.common.utils.JwtUtils;
+import com.li.socialplatform.common.utils.RedisUtil;
+import com.li.socialplatform.common.utils.TokenCacheUtil;
 import com.li.socialplatform.pojo.entity.Authority;
 import com.li.socialplatform.pojo.entity.User;
 import com.li.socialplatform.server.mapper.AuthorityMapper;
@@ -16,7 +19,6 @@ import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jetbrains.annotations.NotNull;
-import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -39,12 +41,11 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
-    private static final String USER_ROLE_CACHE_KEY = "user-role:";
-
     private final JwtUtils jwtUtils;
     private final UserMapper userMapper;
     private final AuthorityMapper authorityMapper;
-    private final RedisTemplate<String, Object> redisTemplate;
+    private final RedisUtil redisUtil;
+    private final TokenCacheUtil tokenCacheUtil;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
@@ -60,7 +61,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
                 // 检查 token 是否在黑名单中（已注销）
                 String jti = claims.getId();
-                if (jti != null && Boolean.TRUE.equals(redisTemplate.hasKey(KeyConstant.TOKEN_BLACKLIST_KEY + jti))) {
+                if (jti != null && tokenCacheUtil.isBlacklisted(jti)) {
                     log.debug("Token 已被注销, 用户名: {}", username);
                     request.setAttribute("TOKEN_BLACKLISTED", true);
                     chain.doFilter(request, response);
@@ -90,8 +91,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
      * 从 Redis 缓存获取用户角色，缓存未命中时查 DB 并回填
      */
     private String getCachedUserRole(String username) {
-        String cacheKey = USER_ROLE_CACHE_KEY + username;
-        Object cached = redisTemplate.opsForValue().get(cacheKey);
+        String cacheKey = KeyConstant.USER_ROLE_KEY + username;
+        Object cached = redisUtil.get(cacheKey);
         if (cached != null) {
             return cached.toString();
         }
@@ -105,8 +106,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             return null;
         }
         String role = authority.getAuthority();
-        // 缓存 30 分钟
-        redisTemplate.opsForValue().set(cacheKey, role, 30, TimeUnit.MINUTES);
+        redisUtil.set(cacheKey, role, CacheTtl.USER_ROLE_MINUTES, TimeUnit.MINUTES);
         return role;
     }
 }

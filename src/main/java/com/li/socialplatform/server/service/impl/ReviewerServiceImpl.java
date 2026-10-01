@@ -5,6 +5,7 @@ import com.li.socialplatform.common.constant.KeyConstant;
 import com.li.socialplatform.common.constant.MessageConstant;
 import com.li.socialplatform.common.utils.BanCacheUtil;
 import com.li.socialplatform.common.utils.DataCacheUtil;
+import com.li.socialplatform.common.utils.RedisUtil;
 import com.li.socialplatform.common.utils.UserIdUtil;
 import com.li.socialplatform.server.mapper.CommentMapper;
 import com.li.socialplatform.server.mapper.PostMapper;
@@ -25,7 +26,6 @@ import org.springframework.data.elasticsearch.client.elc.NativeQuery;
 import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
 import org.springframework.data.elasticsearch.core.SearchHit;
 import org.springframework.data.elasticsearch.core.SearchHits;
-import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -42,7 +42,7 @@ public class ReviewerServiceImpl implements IReviewerService {
 
     private final PostMapper postMapper;
     private final UserMapper userMapper;
-    private final RedisTemplate<String, Object> redisTemplate;
+    private final RedisUtil redisUtil;
     private final UserIdUtil userIdUtil;
     private final CommentMapper commentMapper;
     private final DataCacheUtil dataCacheUtil;
@@ -106,6 +106,10 @@ public class ReviewerServiceImpl implements IReviewerService {
             userMapper.selectBatchIds(userIds).forEach(u -> userMap.put(u.getId(), u));
         }
 
+        // 批量读取点赞数与点赞状态（pipeline 一次往返）
+        Map<Long, Integer> likeCounts = dataCacheUtil.getLikeCounts(ids);
+        Map<Long, Boolean> likedMap = dataCacheUtil.isLikedBatch(userId, ids);
+
         List<PostVO> postVOS = new ArrayList<>();
         for (Long id : ids) {
             Post post = postMap.get(id);
@@ -115,12 +119,8 @@ public class ReviewerServiceImpl implements IReviewerService {
             if (author != null) {
                 postVO.setUsername(author.getUsername());
             }
-            postVO.setLikeCount(dataCacheUtil.getLikeCount(id));
-            if (userId != null) {
-                postVO.setLiked(dataCacheUtil.isLiked(id, userId));
-            } else {
-                postVO.setLiked(false);
-            }
+            postVO.setLikeCount(likeCounts.getOrDefault(id, 0));
+            postVO.setLiked(likedMap.getOrDefault(id, false));
             postVO.setEnabled(false);
             postVOS.add(postVO);
         }
@@ -130,7 +130,7 @@ public class ReviewerServiceImpl implements IReviewerService {
     @Transactional
     @Override
     public Result deleteComment(Long id, Long postId) {
-        redisTemplate.opsForZSet().remove(KeyConstant.COMMENT_KEY + postId, id);
+        redisUtil.zsets().remove(KeyConstant.COMMENT_KEY + postId, id);
         commentMapper.deleteById(id);
         return Result.ok(MessageConstant.DELETE_SUCCESS, "");
     }

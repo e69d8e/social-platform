@@ -1,8 +1,8 @@
 package com.li.socialplatform.config;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.li.socialplatform.common.constant.KeyConstant;
 import com.li.socialplatform.common.utils.JwtUtils;
+import com.li.socialplatform.common.utils.TokenCacheUtil;
 import com.li.socialplatform.pojo.entity.User;
 import com.li.socialplatform.server.mapper.UserMapper;
 import io.jsonwebtoken.Claims;
@@ -11,7 +11,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.jetbrains.annotations.NotNull;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.simp.config.ChannelRegistration;
@@ -42,7 +41,7 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     private final JwtUtils jwtUtils;
     private final UserMapper userMapper;
-    private final RedisTemplate<String, Object> redisTemplate;
+    private final TokenCacheUtil tokenCacheUtil;
 
     @Value("${cors.allowed-origin:http://127.0.0.1:5173,http://127.0.0.1:8080,http://localhost:5173,http://localhost:8080}")
     private String allowedOrigin;
@@ -73,33 +72,40 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
             public Message<?> preSend(@NotNull Message<?> message, @NotNull MessageChannel channel) {
                 StompHeaderAccessor accessor = MessageHeaderAccessor.getAccessor(message, StompHeaderAccessor.class);
                 if (accessor != null && StompCommand.CONNECT.equals(accessor.getCommand())) {
-                    // 从 STOMP CONNECT headers 中获取 token
+                    // 从 STOMP CONNECT headers 中获取 token，缺失直接拒绝，不允许匿名连接
                     List<String> authorization = accessor.getNativeHeader("token");
-                    if (authorization != null && !authorization.isEmpty()) {
-                        String token = authorization.getFirst();
-                        try {
-                            Claims claims = jwtUtils.parseToken(token);
-                            String username = claims.getSubject();
-                            // 检查 token 是否在黑名单中
-                            String jti = claims.getId();
-                            if (jti != null && Boolean.TRUE.equals(redisTemplate.hasKey(KeyConstant.TOKEN_BLACKLIST_KEY + jti))) {
-                                log.warn("WebSocket CONNECT 拒绝: token 已注销");
-                                return null;
-                            }
-                            if (username != null) {
-                                User user = userMapper.selectOne(
-                                        new LambdaQueryWrapper<User>().eq(User::getUsername, username));
-                                if (user != null) {
-                                    Principal principal = new UsernamePasswordAuthenticationToken(
-                                            String.valueOf(user.getId()), null, Collections.emptyList());
-                                    accessor.setUser(principal);
-                                    log.info("WebSocket 用户连接: userId={}, username={}", user.getId(), username);
-                                }
-                            }
-                        } catch (Exception e) {
-                            log.warn("WebSocket CONNECT token 验证失败: {}", e.getMessage());
+                    if (authorization == null || authorization.isEmpty()) {
+                        log.warn("WebSocket CONNECT 拒绝: 缺少 token");
+                        return null;
+                    }
+                    String token = authorization.getFirst();
+                    try {
+                        Claims claims = jwtUtils.parseToken(token);
+                        String username = claims.getSubject();
+                        // 检查 token 是否在黑名单中
+                        String jti = claims.getId();
+                        if (jti != null && tokenCacheUtil.isBlacklisted(jti)) {
+                            log.warn("WebSocket CONNECT 拒绝: token 已注销");
                             return null;
                         }
+                        if (username != null) {
+                            User user = userMapper.selectOne(
+                                    new LambdaQueryWrapper<User>().eq(User::getUsername, username));
+                            if (user == null || !Boolean.TRUE.equals(user.getEnabled())) {
+                                log.warn("WebSocket CONNECT 拒绝: 用户不存在或已被封禁, username={}", username);
+                                return null;
+                            }
+                            Principal principal = new UsernamePasswordAuthenticationToken(
+                                    String.valueOf(user.getId()), null, Collections.emptyList());
+                            accessor.setUser(principal);
+                            log.info("WebSocket 用户连接: userId={}, username={}", user.getId(), username);
+                        } else {
+                            log.warn("WebSocket CONNECT 拒绝: token 无效");
+                            return null;
+                        }
+                    } catch (Exception e) {
+                        log.warn("WebSocket CONNECT token 验证失败: {}", e.getMessage());
+                        return null;
                     }
                 }
                 return message;

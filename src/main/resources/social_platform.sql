@@ -70,8 +70,8 @@ CREATE TABLE if not exists `follow`
     `followee_id` BIGINT   NOT NULL COMMENT '被关注者ID',
     `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '关注时间',
     PRIMARY KEY (`id`),
-    KEY `idx_followee` (`followee_id`),
-    KEY `idx_follower` (`follower_id`)
+    UNIQUE KEY `uk_follower_followee` (`follower_id`, `followee_id`),
+    KEY `idx_followee` (`followee_id`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4 COMMENT ='关注关系表';
 

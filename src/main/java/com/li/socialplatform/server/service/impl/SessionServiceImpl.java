@@ -34,6 +34,12 @@ public class SessionServiceImpl implements SessionService {
 
     @Override
     public Result delete(String sessionId) {
+        // 校验会话属主，防止越权删除他人会话
+        Long userId = userIdUtil.getUserId();
+        Session session = sessionMapper.selectById(sessionId);
+        if (session == null || !session.getUserId().equals(userId)) {
+            return Result.error(MessageConstant.SESSION_NOT_EXIST);
+        }
         if (sessionMapper.deleteById(sessionId) > 0) {
             // 删除 MongoDB 中的聊天记录
             Criteria criteria = Criteria.where("memoryId").is(sessionId);
@@ -60,6 +66,12 @@ public class SessionServiceImpl implements SessionService {
 
     @Override
     public Result getSession(String sessionId) {
+        // 校验会话属主，防止越权查看他人 AI 对话记录
+        Long userId = userIdUtil.getUserId();
+        Session session = sessionMapper.selectById(sessionId);
+        if (session == null || !session.getUserId().equals(userId)) {
+            return Result.error(MessageConstant.SESSION_NOT_EXIST);
+        }
         Criteria criteria = Criteria.where("memoryId").is(sessionId);
         Query query = Query.query(criteria);
         Messages messages = mongoTemplate.findOne(query, Messages.class);

@@ -5,6 +5,7 @@ import com.li.socialplatform.common.constant.KeyConstant;
 import com.li.socialplatform.common.constant.MessageConstant;
 import com.li.socialplatform.common.utils.AsyncTaskUtil;
 import com.li.socialplatform.common.utils.DataCacheUtil;
+import com.li.socialplatform.common.utils.RedisUtil;
 import com.li.socialplatform.common.utils.UserIdUtil;
 import com.li.socialplatform.common.utils.UserIntersetScoreUtil;
 import com.li.socialplatform.server.mapper.LikeMapper;
@@ -15,7 +16,6 @@ import com.li.socialplatform.pojo.entity.Result;
 import com.li.socialplatform.server.service.ILikeService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Service;
 
 /**
@@ -28,7 +28,7 @@ import org.springframework.stereotype.Service;
 public class LikeServiceImpl extends ServiceImpl<LikeMapper, LikeRecord> implements ILikeService {
 
     private final PostMapper postMapper;
-    private final RedisTemplate<String, Object> redisTemplate;
+    private final RedisUtil redisUtil;
     private final UserIdUtil userIdUtil;
     private final AsyncTaskUtil asyncTaskUtil;
     private final UserIntersetScoreUtil userIntersetScoreUtil;
@@ -44,16 +44,16 @@ public class LikeServiceImpl extends ServiceImpl<LikeMapper, LikeRecord> impleme
         Long increment;
         if (member) {
             // 点赞数-1
-            increment = redisTemplate.opsForValue().increment(KeyConstant.LIKE_COUNT + postId, -1);
-            redisTemplate.opsForSet().remove(key, userId);
+            increment = redisUtil.increment(KeyConstant.LIKE_COUNT + postId, -1);
+            redisUtil.sets().remove(key, userId);
             asyncTaskUtil.asyncDeleteLikeRecord(postId, userId);
             if (post != null) {
                 userIntersetScoreUtil.changeScore(userId, post.getCategoryId(), -10);
             }
         } else {
             // 点赞数+1
-            increment = redisTemplate.opsForValue().increment(KeyConstant.LIKE_COUNT + postId, 1);
-            redisTemplate.opsForSet().add(key, userId);
+            increment = redisUtil.increment(KeyConstant.LIKE_COUNT + postId, 1);
+            redisUtil.sets().add(key, userId);
             asyncTaskUtil.asyncInsertLikeRecord(postId, userId);
             if (post != null) {
                 userIntersetScoreUtil.changeScore(userId, post.getCategoryId(), 10);

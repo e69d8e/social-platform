@@ -92,14 +92,17 @@ public class AdminServiceImpl implements IAdminService {
         Map<Long, User> userMap = new HashMap<>();
         userMapper.selectBatchIds(ids).forEach(u -> userMap.put(u.getId(), u));
         Long currentUserId = userIdUtil.getUserId();
+        // 批量读取粉丝数与关注状态（pipeline 一次往返）
+        Map<Long, Integer> fansCounts = dataCacheUtil.getFollowerCounts(ids);
+        Map<Long, Boolean> followedMap = dataCacheUtil.isFollowedBatch(currentUserId, ids);
         List<UserVO> users = new ArrayList<>();
         for (Long id : ids) {
             User user = userMap.get(id);
             if (user == null) continue;
             UserVO userVO = BeanUtil.copyProperties(user, UserVO.class);
             userVO.setEnabled(false);
-            userVO.setFollowed(currentUserId != null && dataCacheUtil.isFollowed(currentUserId, id));
-            userVO.setFansCount(dataCacheUtil.getFollowerCount(user.getId()));
+            userVO.setFollowed(followedMap.getOrDefault(id, false));
+            userVO.setFansCount(fansCounts.getOrDefault(user.getId(), 0));
             users.add(userVO);
         }
         return Result.ok(users, total);
@@ -152,14 +155,18 @@ public class AdminServiceImpl implements IAdminService {
 
         SearchHits<User> hits = elasticsearchOperations.search(query, User.class);
         long total = hits.getTotalHits();
+        List<Long> hitUserIds = hits.stream().map(hit -> hit.getContent().getId()).toList();
+        // 批量读取粉丝数与关注状态（pipeline 一次往返）
+        Map<Long, Integer> fansCounts = dataCacheUtil.getFollowerCounts(hitUserIds);
+        Map<Long, Boolean> followedMap = dataCacheUtil.isFollowedBatch(
+                userIdUtil.getUserId(), hitUserIds);
         List<UserVO> userVOS = new ArrayList<>();
-        Long currentUserId = userIdUtil.getUserId();
         for (SearchHit<User> hit : hits) {
             User user = hit.getContent();
             UserVO userVO = BeanUtil.copyProperties(user, UserVO.class);
             userVO.setEnabled(false);
-            userVO.setFollowed(currentUserId != null && dataCacheUtil.isFollowed(currentUserId, user.getId()));
-            userVO.setFansCount(dataCacheUtil.getFollowerCount(user.getId()));
+            userVO.setFollowed(followedMap.getOrDefault(user.getId(), false));
+            userVO.setFansCount(fansCounts.getOrDefault(user.getId(), 0));
             userVOS.add(userVO);
         }
         return Result.ok(userVOS, total);

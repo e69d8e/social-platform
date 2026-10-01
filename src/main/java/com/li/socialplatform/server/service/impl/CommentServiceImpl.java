@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.li.socialplatform.common.constant.KeyConstant;
 import com.li.socialplatform.common.constant.MessageConstant;
 import com.li.socialplatform.common.properties.SystemConstants;
+import com.li.socialplatform.common.utils.RedisUtil;
 import com.li.socialplatform.common.utils.UserIdUtil;
 import com.li.socialplatform.common.utils.UserIntersetScoreUtil;
 import com.li.socialplatform.server.mapper.CommentMapper;
@@ -19,7 +20,6 @@ import com.li.socialplatform.pojo.vo.CommentVO;
 import com.li.socialplatform.server.service.ICommentService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -36,7 +36,7 @@ import java.util.stream.Collectors;
 @Slf4j
 public class CommentServiceImpl extends ServiceImpl<CommentMapper, Comment> implements ICommentService {
 
-    private final RedisTemplate<String, Object> redisTemplate;
+    private final RedisUtil redisUtil;
     private final SystemConstants systemConstants;
     private final CommentMapper commentMapper;
     private final UserMapper userMapper;
@@ -67,7 +67,7 @@ public class CommentServiceImpl extends ServiceImpl<CommentMapper, Comment> impl
         // 一级评论保存到缓存
         // 如果是子评论不缓存
         if (comment.getReplyTo() == null) {
-            redisTemplate.opsForZSet()
+            redisUtil.zsets()
                     .add(KeyConstant.COMMENT_KEY + commentDTO.getPostId(),
                             comment.getId(), timeMillis);
         }
@@ -82,8 +82,8 @@ public class CommentServiceImpl extends ServiceImpl<CommentMapper, Comment> impl
     @Override
     public Result getComments(Long id, Long lastId, Integer offset) {
         // 从缓存中获取一级评论
-        Set<ZSetOperations.TypedTuple<Object>> typedTuples = redisTemplate
-                .opsForZSet()
+        Set<ZSetOperations.TypedTuple<Object>> typedTuples = redisUtil
+                .zsets()
                 .reverseRangeByScoreWithScores(
                         KeyConstant.COMMENT_KEY + id,
                         0, lastId, offset, Long.parseLong(systemConstants.defaultPageSize));

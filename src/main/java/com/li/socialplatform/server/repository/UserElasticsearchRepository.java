@@ -13,10 +13,8 @@ import java.util.List;
  */
 public interface UserElasticsearchRepository extends ElasticsearchRepository<User, Long> {
 
-    @Query("{\"multi_match\": {\"query\": \"?0\", \"fields\": [\"username.edge\", \"nickname.edge\"], \"type\": \"best_fields\"}}")
+    @Query("""
+            {"bool": {"must": [{"multi_match": {"query": "?0", "fields": ["username.edge", "nickname.edge"], "type": "best_fields"}}], "filter": [{"term": {"enabled": true}}]}}
+            """)
     List<User> findByUsernameOrNickname(String username, String nickname, Pageable pageable);
-
-    // count 方法不使用 @Query，避免类型转换错误
-    // 由 Spring Data ES 根据方法名推导查询（使用主字段 username/nickname）
-    long countByUsernameOrNickname(String username, String nickname);
 }

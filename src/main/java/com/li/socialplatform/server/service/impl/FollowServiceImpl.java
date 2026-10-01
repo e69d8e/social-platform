@@ -6,6 +6,7 @@ import com.li.socialplatform.common.constant.KeyConstant;
 import com.li.socialplatform.common.constant.MessageConstant;
 import com.li.socialplatform.common.utils.AsyncTaskUtil;
 import com.li.socialplatform.common.utils.DataCacheUtil;
+import com.li.socialplatform.common.utils.RedisUtil;
 import com.li.socialplatform.common.utils.UserIdUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.li.socialplatform.server.mapper.FollowMapper;
@@ -19,7 +20,7 @@ import com.li.socialplatform.pojo.vo.UserVO;
 import com.li.socialplatform.server.service.IFollowService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.stereotype.Service;
 
@@ -35,7 +36,7 @@ import java.util.*;
 @Slf4j
 public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> implements IFollowService {
 
-    private final RedisTemplate<String, Object> redisTemplate;
+    private final RedisUtil redisUtil;
     private final UserMapper userMapper;
     private final PostMapper postMapper;
     private final UserIdUtil userIdUtil;
@@ -60,22 +61,30 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
         }
         long time = System.currentTimeMillis();
         // 粉丝数加一
-        Long increment = redisTemplate.opsForValue().increment(KeyConstant.FOLLOW_COUNT_KEY + id, 1);
+        Long increment = redisUtil.increment(KeyConstant.FOLLOW_COUNT_KEY + id, 1);
         // 缓存粉丝列表
-        redisTemplate.opsForZSet().add(KeyConstant.FANS_LIST_KEY + id, userId, time);
+        redisUtil.zsets().add(KeyConstant.FANS_LIST_KEY + id, userId, time);
         // 缓存关注列表
-        redisTemplate.opsForZSet().add(KeyConstant.Follow_LIST_KEY + userId, id, time);
+        redisUtil.zsets().add(KeyConstant.Follow_LIST_KEY + userId, id, time);
         // 续期 TTL
         dataCacheUtil.setFollowTTL(userId, id);
-        // 异步写入 MySQL
-        asyncTaskUtil.asyncInsertFollowRecord(userId, id);
+        // 同步落库，靠 follow 表唯一键 uk_follower_followee 兜底并发重复关注
+        try {
+            baseMapper.insert(new Follow(null, userId, id, null));
+        } catch (DuplicateKeyException e) {
+            // 并发下另一请求已关注成功：回滚 Redis 侧的计数与列表
+            redisUtil.increment(KeyConstant.FOLLOW_COUNT_KEY + id, -1);
+            redisUtil.zsets().remove(KeyConstant.FANS_LIST_KEY + id, userId);
+            redisUtil.zsets().remove(KeyConstant.Follow_LIST_KEY + userId, id);
+            return Result.error(MessageConstant.USER_IS_FOLLOWED);
+        }
         // 异步同步 ES
         if (increment != null) {
             asyncTaskUtil.syncUserFansCount(id, increment.intValue());
         }
         // 将要关注用户的帖子查找出来
         Set<ZSetOperations.TypedTuple<Object>> typedTuples =
-                redisTemplate.opsForZSet().rangeWithScores(KeyConstant.POST_KEY + id, 0, -1);
+                redisUtil.zsets().rangeWithScores(KeyConstant.POST_KEY + id, 0, -1);
         String key = KeyConstant.POST_LIST_KEY + userId;
         if (typedTuples == null || typedTuples.isEmpty()) {
             List<Post> posts = postMapper.selectList(new LambdaQueryWrapper<Post>()
@@ -85,23 +94,28 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
                     .last("LIMIT 20"));
             if (!posts.isEmpty()) {
                 String authorPostKey = KeyConstant.POST_KEY + id;
+                Map<Object, Double> memberScores = new HashMap<>(posts.size());
                 for (Post p : posts) {
                     double score = p.getCreateTime() != null
                             ? p.getCreateTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
                             : (double) System.currentTimeMillis();
-                    redisTemplate.opsForZSet().add(authorPostKey, p.getId(), score);
-                    redisTemplate.opsForZSet().add(key, p.getId(), score);
+                    memberScores.put(p.getId(), score);
                 }
+                // pipeline 批量回填作者帖子缓存与关注流缓存
+                redisUtil.pipeline(ops -> {
+                    for (Map.Entry<Object, Double> entry : memberScores.entrySet()) {
+                        ops.opsForZSet().add(authorPostKey, entry.getKey(), entry.getValue());
+                        ops.opsForZSet().add(key, entry.getKey(), entry.getValue());
+                    }
+                });
             }
             return Result.ok(MessageConstant.FOLLOW_SUCCESS, "");
         }
-        List<Long> ids = typedTuples.stream()
-                .map(ZSetOperations.TypedTuple::getValue).map(String::valueOf).map(Long::valueOf).toList();
-        List<Double> scores = typedTuples.stream()
-                .map(ZSetOperations.TypedTuple::getScore).toList();
-        for (int i = 0; i < ids.size(); i++) {
-            redisTemplate.opsForZSet().add(key, ids.get(i), scores.get(i));
+        Map<Object, Double> memberScores = new HashMap<>(typedTuples.size());
+        for (ZSetOperations.TypedTuple<Object> tuple : typedTuples) {
+            memberScores.put(tuple.getValue(), tuple.getScore());
         }
+        redisUtil.zAddAll(key, memberScores);
         return Result.ok(MessageConstant.FOLLOW_SUCCESS, "");
     }
 
@@ -119,9 +133,9 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
             return Result.error(MessageConstant.USER_NOT_FOLLOWED, List.of());
         }
         // 粉丝数减一
-        Long increment = redisTemplate.opsForValue().increment(KeyConstant.FOLLOW_COUNT_KEY + id, -1);
-        redisTemplate.opsForZSet().remove(KeyConstant.FANS_LIST_KEY + id, userId);
-        redisTemplate.opsForZSet().remove(KeyConstant.Follow_LIST_KEY + userId, id);
+        Long increment = redisUtil.increment(KeyConstant.FOLLOW_COUNT_KEY + id, -1);
+        redisUtil.zsets().remove(KeyConstant.FANS_LIST_KEY + id, userId);
+        redisUtil.zsets().remove(KeyConstant.Follow_LIST_KEY + userId, id);
         // 续期 TTL
         dataCacheUtil.setFollowTTL(userId, id);
         // 异步删除 MySQL
@@ -132,16 +146,18 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
         }
         // 将要取关的用户的帖子查找出来
         Set<ZSetOperations.TypedTuple<Object>> typedTuples =
-                redisTemplate.opsForZSet().rangeWithScores(KeyConstant.POST_KEY + id, 0, -1);
+                redisUtil.zsets().rangeWithScores(KeyConstant.POST_KEY + id, 0, -1);
         if (typedTuples == null || typedTuples.isEmpty()) {
             return Result.ok(MessageConstant.UN_FOLLOW_SUCCESS, "");
         }
         List<Object> ids = typedTuples.stream()
                 .map(ZSetOperations.TypedTuple::getValue).toList();
         String key = KeyConstant.POST_LIST_KEY + userId;
-        for (Object o : ids) {
-            redisTemplate.opsForZSet().remove(key, o);
-        }
+        redisUtil.pipeline(ops -> {
+            for (Object o : ids) {
+                ops.opsForZSet().remove(key, o);
+            }
+        });
         return Result.ok(MessageConstant.UN_FOLLOW_SUCCESS, "");
     }
 
@@ -159,7 +175,9 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
         }
         long start = (long) (pageNum - 1) * pageSize;
         long end = start + pageSize - 1;
-        Long total = redisTemplate.opsForZSet().size(KeyConstant.FANS_LIST_KEY + id);
+        // 缓存未命中时回源 DB（列表 ZSet 过期后不再静默返回空）
+        dataCacheUtil.ensureFollowDataLoaded(id);
+        Long total = redisUtil.zsets().size(KeyConstant.FANS_LIST_KEY + id);
         if (total == null) {
             return Result.ok(List.of(), 0L);
         }
@@ -170,7 +188,7 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
             end = total - 1;
         }
         // 获取粉丝列表
-        Set<Object> follower = redisTemplate.opsForZSet().range(KeyConstant.FANS_LIST_KEY + id, start, end);
+        Set<Object> follower = redisUtil.zsets().range(KeyConstant.FANS_LIST_KEY + id, start, end);
         if (follower == null || follower.isEmpty()) {
             return Result.ok(List.of(), 0L);
         }
@@ -178,14 +196,14 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
         // 获取当前用户
         Long userId = userIdUtil.getUserId();
         List<User> users = userMapper.selectByIds(ids);
+        // 批量读取粉丝数与关注状态（pipeline 一次往返）
+        Map<Long, Integer> fansCounts = dataCacheUtil.getFollowerCounts(ids);
+        Map<Long, Boolean> followedMap = userId != null
+                ? dataCacheUtil.isFollowedBatch(userId, ids) : Map.of();
         List<UserVO> userVOs = users.stream().map(user -> {
             UserVO userVO = BeanUtil.copyProperties(user, UserVO.class);
-            userVO.setFansCount(dataCacheUtil.getFollowerCount(user.getId()));
-            if (userId != null) {
-                userVO.setFollowed(dataCacheUtil.isFollowed(userId, user.getId()));
-            } else {
-                userVO.setFollowed(false);
-            }
+            userVO.setFansCount(fansCounts.getOrDefault(user.getId(), 0));
+            userVO.setFollowed(followedMap.getOrDefault(user.getId(), false));
             return userVO;
         }).toList();
         return Result.ok(userVOs, total);
@@ -206,7 +224,9 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
         }
         long start = (long) (pageNum - 1) * pageSize;
         long end = start + pageSize - 1;
-        Long total = redisTemplate.opsForZSet().size(KeyConstant.Follow_LIST_KEY + id);
+        // 缓存未命中时回源 DB
+        dataCacheUtil.ensureFollowDataLoaded(id);
+        Long total = redisUtil.zsets().size(KeyConstant.Follow_LIST_KEY + id);
         if (total == null) {
             return Result.ok(List.of(), 0L);
         }
@@ -217,22 +237,26 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
             end = total - 1;
         }
         // 查询该用户关注列表
-        Set<Object> followee = redisTemplate.opsForZSet().range(KeyConstant.Follow_LIST_KEY + id, start, end);
+        Set<Object> followee = redisUtil.zsets().range(KeyConstant.Follow_LIST_KEY + id, start, end);
         if (followee == null || followee.isEmpty()) {
             return Result.ok(List.of(), 0L);
         }
         List<Long> ids = followee.stream().map(member -> Long.valueOf(member.toString())).toList();
         List<User> users = userMapper.selectByIds(ids);
+        Long userId = userIdUtil.getUserId();
+        // 批量读取粉丝数与关注状态（pipeline 一次往返）
+        Map<Long, Integer> fansCounts = dataCacheUtil.getFollowerCounts(ids);
+        Map<Long, Boolean> followedMap = !isSelf && userId != null
+                ? dataCacheUtil.isFollowedBatch(userId, ids) : Map.of();
         List<UserVO> userVOs = new ArrayList<>();
         for (User user : users) {
             UserVO userVO = BeanUtil.copyProperties(user, UserVO.class);
             if (isSelf) {
                 userVO.setFollowed(true);
             } else {
-                Long userId = userIdUtil.getUserId();
-                userVO.setFollowed(dataCacheUtil.isFollowed(userId, user.getId()));
+                userVO.setFollowed(followedMap.getOrDefault(user.getId(), false));
             }
-            userVO.setFansCount(dataCacheUtil.getFollowerCount(user.getId()));
+            userVO.setFansCount(fansCounts.getOrDefault(user.getId(), 0));
             userVOs.add(userVO);
         }
         return Result.ok(userVOs, total);
@@ -245,21 +269,25 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
         Long userId = userIdUtil.getUserId();
         long start = (long) (pageNum - 1) * pageSize;
         long end = start + pageSize - 1;
-        Long total = redisTemplate.opsForZSet().intersectAndStore(
+        // 缓存未命中时回源 DB
+        dataCacheUtil.ensureFollowDataLoaded(userId);
+        Long total = redisUtil.zsets().intersectAndStore(
                 KeyConstant.FANS_LIST_KEY + userId,
                 KeyConstant.Follow_LIST_KEY + userId,
                 KeyConstant.FRIEND_LIST_KEY + userId);
-        Set<Object> friend = redisTemplate.opsForZSet().range(KeyConstant.FRIEND_LIST_KEY + userId, start, end);
+        Set<Object> friend = redisUtil.zsets().range(KeyConstant.FRIEND_LIST_KEY + userId, start, end);
         if (friend == null || friend.isEmpty()) {
             return Result.ok(List.of(), 0L);
         }
         List<Long> ids = friend.stream().map(member -> Long.valueOf(member.toString())).toList();
         List<User> users = userMapper.selectByIds(ids);
+        // 批量读取粉丝数（pipeline 一次往返）
+        Map<Long, Integer> fansCounts = dataCacheUtil.getFollowerCounts(ids);
         List<UserVO> userVOs = new ArrayList<>();
         for (User user : users) {
             UserVO userVO = BeanUtil.copyProperties(user, UserVO.class);
             userVO.setFollowed(true);
-            userVO.setFansCount(dataCacheUtil.getFollowerCount(user.getId()));
+            userVO.setFansCount(fansCounts.getOrDefault(user.getId(), 0));
             userVOs.add(userVO);
         }
         return Result.ok(userVOs, total);

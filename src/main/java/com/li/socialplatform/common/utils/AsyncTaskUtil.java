@@ -3,6 +3,7 @@ package com.li.socialplatform.common.utils;
 import java.util.List;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.li.socialplatform.pojo.entity.Follow;
 import com.li.socialplatform.pojo.entity.LikeRecord;
 import com.li.socialplatform.pojo.entity.Post;
@@ -40,8 +41,10 @@ public class AsyncTaskUtil {
             if (post != null) {
                 post.setLikeCount(likeCount);
                 elasticsearchOperations.save(post);
-                // 保存到 数据库
-                postMapper.updateById(post);
+                // 只定向更新 like_count：ES 中的 content 是纯文本，整实体回写会把 DB 的 HTML 正文覆盖掉
+                postMapper.update(null, new LambdaUpdateWrapper<Post>()
+                        .eq(Post::getId, postId)
+                        .set(Post::getLikeCount, likeCount));
             }
         } catch (Exception e) {
             log.error("异步同步帖子点赞数到ES失败: postId={}, error={}", postId, e.getMessage());
@@ -55,8 +58,10 @@ public class AsyncTaskUtil {
             if (user != null) {
                 user.setFansCount(count);
                 elasticsearchOperations.save(user);
-                // 保存到 数据库
-                userMapper.updateById(user);
+                // 只定向更新 fans_count，避免 ES 快照整实体回写覆盖 DB 其他字段
+                userMapper.update(null, new LambdaUpdateWrapper<User>()
+                        .eq(User::getId, userId)
+                        .set(User::getFansCount, count));
             }
         } catch (Exception e) {
             log.error("异步同步用户粉丝数到ES失败: userId={}, error={}", userId, e.getMessage());
@@ -80,15 +85,6 @@ public class AsyncTaskUtil {
                     .eq(LikeRecord::getUserId, userId));
         } catch (Exception e) {
             log.error("异步删除点赞记录失败: postId={}, userId={}, error={}", postId, userId, e.getMessage());
-        }
-    }
-
-    @Async("mvcTaskExecutor")
-    public void asyncInsertFollowRecord(Long followerId, Long followeeId) {
-        try {
-            followMapper.insert(new Follow(null, followerId, followeeId, null));
-        } catch (Exception e) {
-            log.error("异步插入关注记录失败: followerId={}, followeeId={}, error={}", followerId, followeeId, e.getMessage());
         }
     }
 

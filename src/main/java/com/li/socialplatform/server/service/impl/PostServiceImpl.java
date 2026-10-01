@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.li.socialplatform.common.constant.AuthorityConstant;
+import com.li.socialplatform.common.constant.CacheTtl;
 import com.li.socialplatform.common.constant.KeyConstant;
 import com.li.socialplatform.common.constant.MessageConstant;
 import com.li.socialplatform.common.properties.SystemConstants;
@@ -29,7 +30,6 @@ import org.springframework.data.elasticsearch.client.elc.ElasticsearchTemplate;
 import org.springframework.data.elasticsearch.client.elc.NativeQuery;
 import org.springframework.data.elasticsearch.core.SearchHit;
 import org.springframework.data.elasticsearch.core.SearchHits;
-import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.core.ZSetOperations;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -56,7 +56,8 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
     private final PostMapper postMapper;
     private final HomePostMapper homePostMapper;
     private final CategoryMapper categoryMapper;
-    private final RedisTemplate<String, Object> redisTemplate;
+    private final RedisUtil redisUtil;
+    private final ViewCountCacheUtil viewCountCacheUtil;
     private final SystemConstants systemConstants;
     private final UserIdUtil userIdUtil;
     private final PostElasticsearchRepository postElasticsearchRepository;
@@ -70,8 +71,6 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
     private final ElasticsearchTemplate elasticsearchTemplate;
     private final UserInboxMapper userInboxMapper;
     private final AsyncTaskUtil asyncTaskUtil;
-
-    private static final long HOME_POST_CACHE_TTL_DAYS = 7;
 
     /** 默认分类ID：social_platform.sql 中 category 表种子数据 id=1 为“其他” */
     private static final Integer DEFAULT_CATEGORY_ID = 1;
@@ -126,8 +125,8 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         log.info("用户 {} 发表了帖子 {}", id, post.getId());
         long time = System.currentTimeMillis();
         // 将帖子添加到缓存中
-        redisTemplate.opsForZSet().add(KeyConstant.POST_LIST_KEY, post.getId(), time);
-        redisTemplate.opsForZSet().add(KeyConstant.POST_KEY + id, post.getId(), time);
+        redisUtil.zsets().add(KeyConstant.POST_LIST_KEY, post.getId(), time);
+        redisUtil.zsets().add(KeyConstant.POST_KEY + id, post.getId(), time);
         // 将帖子添加到首页帖子表
         HomePost homePost = new HomePost();
         homePost.setPostId(post.getId());
@@ -135,14 +134,18 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         homePostMapper.insert(homePost);
         // 添加到首页帖子缓存
         String homePostKey = KeyConstant.HOME_POST_LIST_KEY;
-        redisTemplate.opsForZSet().add(homePostKey, post.getId(), time);
-        redisTemplate.expire(homePostKey, HOME_POST_CACHE_TTL_DAYS, TimeUnit.DAYS);
+        redisUtil.zsets().add(homePostKey, post.getId(), time);
+        redisUtil.expire(homePostKey, CacheTtl.DEFAULT_DAYS, TimeUnit.DAYS);
         // 查询所有粉丝
         List<Long> fanIds = getFanIds(id);
-        // 将帖子添加到粉丝缓存
-        fanIds.forEach(fanId -> redisTemplate.opsForZSet().add(KeyConstant.POST_LIST_KEY + fanId, post.getId(), time));
-        // 异步写入粉丝收件箱表
+        // 将帖子 pipeline 批量添加到粉丝缓存
         if (!fanIds.isEmpty()) {
+            redisUtil.pipeline(ops -> {
+                for (Long fanId : fanIds) {
+                    ops.opsForZSet().add(KeyConstant.POST_LIST_KEY + fanId, post.getId(), time);
+                }
+            });
+            // 异步写入粉丝收件箱表
             asyncTaskUtil.asyncInsertUserInbox(fanIds, post.getId(), id);
         }
         post.setLikeCount(0);
@@ -191,8 +194,8 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         postDetailVO.setCover(post.getCover());
         postDetailVO.setFollowed(dataCacheUtil.isFollowed(userId, user.getId()));
         // 读取浏览量（Redis 中待同步的增量 + DB 中已持久化的值）
-        Integer viewCount = (Integer) redisTemplate.opsForValue().get(KeyConstant.POST_VIEW_COUNT + id);
-        postDetailVO.setViewCount((post.getViewCount() == null ? 0 : post.getViewCount()) + (viewCount == null ? 0 : viewCount));
+        long viewDelta = viewCountCacheUtil.getViewDelta(id);
+        postDetailVO.setViewCount((post.getViewCount() == null ? 0 : post.getViewCount()) + (int) viewDelta);
         return Result.ok(postDetailVO);
     }
 
@@ -225,14 +228,14 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
      */
     private Set<ZSetOperations.TypedTuple<Object>> getHomePostCache(Long lastId, int offset, int pageSize) {
         String homePostKey = KeyConstant.HOME_POST_LIST_KEY;
-        Set<ZSetOperations.TypedTuple<Object>> typedTuples = redisTemplate.opsForZSet()
+        Set<ZSetOperations.TypedTuple<Object>> typedTuples = redisUtil.zsets()
                 .reverseRangeByScoreWithScores(homePostKey, 0, lastId, offset, pageSize);
         if (typedTuples != null && !typedTuples.isEmpty()) {
             return typedTuples;
         }
         // 缓存未命中，从 home_post 表加载
         loadHomePostFromDB();
-        return redisTemplate.opsForZSet()
+        return redisUtil.zsets()
                 .reverseRangeByScoreWithScores(homePostKey, 0, lastId, offset, pageSize);
     }
 
@@ -241,19 +244,28 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
      */
     private void loadHomePostFromDB() {
         String homePostKey = KeyConstant.HOME_POST_LIST_KEY;
+        String emptyKey = KeyConstant.HOME_POST_EMPTY_KEY;
         List<HomePost> homePosts = homePostMapper.selectList(
                 new LambdaQueryWrapper<HomePost>().orderByDesc(HomePost::getCreateTime));
         if (homePosts.isEmpty()) {
+            // 空结果防穿透标记
+            redisUtil.set(emptyKey, 1, CacheTtl.EMPTY_MARKER_MINUTES, TimeUnit.MINUTES);
             return;
         }
+        Map<Object, Double> memberScores = new HashMap<>(homePosts.size());
         for (HomePost hp : homePosts) {
-            double score = hp.getCreateTime() != null
-                    ? hp.getCreateTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-                    : (double) System.currentTimeMillis();
-            redisTemplate.opsForZSet().add(homePostKey, hp.getPostId(), score);
+            memberScores.put(hp.getPostId(), toEpochMilli(hp.getCreateTime()));
         }
-        redisTemplate.expire(homePostKey, HOME_POST_CACHE_TTL_DAYS, TimeUnit.DAYS);
+        redisUtil.zAddAll(homePostKey, memberScores);
+        redisUtil.expire(homePostKey, CacheTtl.DEFAULT_DAYS, TimeUnit.DAYS);
         log.info("从 home_post 表加载 {} 条首页帖子到缓存", homePosts.size());
+    }
+
+    /** LocalDateTime 转毫秒时间戳，空值取当前时间 */
+    private double toEpochMilli(java.time.LocalDateTime createTime) {
+        return createTime != null
+                ? createTime.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                : (double) System.currentTimeMillis();
     }
 
     private Result getPersonalizedPosts(Long userId, Map<Integer, Integer> interestScores, int offset, int pageSize) {
@@ -301,6 +313,14 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
             userMapper.selectBatchIds(userIds).forEach(u -> userMap.put(u.getId(), u));
         }
 
+        // 批量读取点赞数与点赞状态（pipeline 一次往返）
+        List<Long> postIds = searchHits.stream()
+                .map(hit -> hit.getContent().getId())
+                .filter(Objects::nonNull)
+                .toList();
+        Map<Long, Integer> likeCounts = dataCacheUtil.getLikeCounts(postIds);
+        Map<Long, Boolean> likedMap = dataCacheUtil.isLikedBatch(userId, postIds);
+
         List<PostVO> postVOS = new ArrayList<>();
         long minTime = 0L;
         for (SearchHit<Post> hit : searchHits) {
@@ -310,8 +330,8 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
             if (author != null) {
                 postVO.setUsername(author.getUsername());
             }
-            postVO.setLikeCount(dataCacheUtil.getLikeCount(post.getId()));
-            postVO.setLiked(dataCacheUtil.isLiked(post.getId(), userId));
+            postVO.setLikeCount(likeCounts.getOrDefault(post.getId(), 0));
+            postVO.setLiked(likedMap.getOrDefault(post.getId(), false));
             postVOS.add(postVO);
             if (post.getCreateTime() != null) {
                 minTime = post.getCreateTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
@@ -333,12 +353,12 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
             return Result.error(MessageConstant.USER_NOT_LOGIN);
         }
         String key = KeyConstant.POST_LIST_KEY + userId;
-        Set<ZSetOperations.TypedTuple<Object>> typedTuples = redisTemplate.opsForZSet()
+        Set<ZSetOperations.TypedTuple<Object>> typedTuples = redisUtil.zsets()
                 .reverseRangeByScoreWithScores(key,
                         0, lastId, offset, Long.parseLong(systemConstants.defaultPageSize));
         if ((typedTuples == null || typedTuples.isEmpty()) && (offset == null || offset == 0)) {
             loadFollowPostsToCache(userId);
-            typedTuples = redisTemplate.opsForZSet()
+            typedTuples = redisUtil.zsets()
                     .reverseRangeByScoreWithScores(key,
                             0, lastId, offset != null ? offset : 0, Long.parseLong(systemConstants.defaultPageSize));
         }
@@ -352,16 +372,15 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
                 .orderByDesc(UserInbox::getCreateTime)
                 .last("LIMIT 50"));
         if (!inboxes.isEmpty()) {
+            Map<Object, Double> memberScores = new HashMap<>(inboxes.size());
             for (UserInbox inbox : inboxes) {
-                double score = inbox.getCreateTime() != null
-                        ? inbox.getCreateTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-                        : (double) System.currentTimeMillis();
-                redisTemplate.opsForZSet().add(key, inbox.getPostId(), score);
+                memberScores.put(inbox.getPostId(), toEpochMilli(inbox.getCreateTime()));
             }
+            redisUtil.zAddAll(key, memberScores);
             return;
         }
         // 如果 inbox 为空，从 follow 关系查询关注的用户最近发布的帖子
-        Set<Object> followeeIds = redisTemplate.opsForZSet().range(KeyConstant.Follow_LIST_KEY + userId, 0, -1);
+        Set<Object> followeeIds = redisUtil.zsets().range(KeyConstant.Follow_LIST_KEY + userId, 0, -1);
         List<Long> targetIds = new ArrayList<>();
         if (followeeIds != null && !followeeIds.isEmpty()) {
             for (Object fId : followeeIds) {
@@ -376,33 +395,35 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
                     .eq(Post::getEnabled, true)
                     .orderByDesc(Post::getCreateTime)
                     .last("LIMIT 50"));
+            Map<Object, Double> memberScores = new HashMap<>(recentPosts.size());
             for (Post p : recentPosts) {
-                double score = p.getCreateTime() != null
-                        ? p.getCreateTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-                        : (double) System.currentTimeMillis();
-                redisTemplate.opsForZSet().add(key, p.getId(), score);
+                memberScores.put(p.getId(), toEpochMilli(p.getCreateTime()));
             }
+            redisUtil.zAddAll(key, memberScores);
         }
     }
 
     @Override
     public Result userListPosts(Long id, Integer pageNum, Integer pageSize) {
         IPage<Post> page = new Page<>(pageNum, pageSize);
-        IPage<Post> postIPage = postMapper.selectPage(page, new LambdaQueryWrapper<Post>().eq(Post::getUserId, id));
+        // 与 getScrollResult 行为一致：主页列表不展示已封禁帖子
+        IPage<Post> postIPage = postMapper.selectPage(page, new LambdaQueryWrapper<Post>()
+                .eq(Post::getUserId, id)
+                .eq(Post::getEnabled, true));
         List<Post> records = postIPage.getRecords();
         List<PostVO> postVOS = new ArrayList<>();
         Long userId = userIdUtil.getUserId();
         User author = userMapper.selectById(id);
         String username = author != null ? author.getUsername() : null;
+        // 批量读取点赞数与点赞状态（pipeline 一次往返）
+        List<Long> postIds = records.stream().map(Post::getId).toList();
+        Map<Long, Integer> likeCounts = dataCacheUtil.getLikeCounts(postIds);
+        Map<Long, Boolean> likedMap = dataCacheUtil.isLikedBatch(userId, postIds);
         for (Post record : records) {
             PostVO postVO = BeanUtil.copyProperties(record, PostVO.class);
             postVO.setUsername(username);
-            postVO.setLikeCount(dataCacheUtil.getLikeCount(record.getId()));
-            if (userId == null) {
-                postVO.setLiked(false);
-            } else {
-                postVO.setLiked(dataCacheUtil.isLiked(record.getId(), userId));
-            }
+            postVO.setLikeCount(likeCounts.getOrDefault(record.getId(), 0));
+            postVO.setLiked(userId == null ? false : likedMap.getOrDefault(record.getId(), false));
             postVOS.add(postVO);
         }
         return Result.ok(postVOS, postIPage.getTotal());
@@ -421,19 +442,23 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         // 删除帖子
         postMapper.deleteById(id);
         List<Long> fanIds = getFanIds(userId);
-        // 将他的粉丝的缓存中的数据清除
-        for (Long fanId : fanIds) {
-            redisTemplate.opsForZSet().remove(KeyConstant.POST_LIST_KEY + fanId, id);
+        // 将他的粉丝的缓存中的数据批量清除（pipeline 一次往返）
+        if (!fanIds.isEmpty()) {
+            redisUtil.pipeline(ops -> {
+                for (Long fanId : fanIds) {
+                    ops.opsForZSet().remove(KeyConstant.POST_LIST_KEY + fanId, id);
+                }
+            });
         }
         // 首页帖子删除
-        redisTemplate.opsForZSet().remove(KeyConstant.POST_LIST_KEY, id);
+        redisUtil.zsets().remove(KeyConstant.POST_LIST_KEY, id);
         // 首页帖子表删除
         homePostMapper.delete(new LambdaQueryWrapper<HomePost>().eq(HomePost::getPostId, id));
-        redisTemplate.opsForZSet().remove(KeyConstant.HOME_POST_LIST_KEY, id);
+        redisUtil.zsets().remove(KeyConstant.HOME_POST_LIST_KEY, id);
         // 收件箱表删除
         userInboxMapper.delete(new LambdaQueryWrapper<UserInbox>().eq(UserInbox::getPostId, id));
         // 我的帖子删除
-        redisTemplate.opsForZSet().remove(KeyConstant.POST_KEY + userId, id);
+        redisUtil.zsets().remove(KeyConstant.POST_KEY + userId, id);
         // 删除帖子的评论
         commentMapper.delete(new LambdaQueryWrapper<Comment>().eq(Comment::getPostId, id));
         // 删除帖子的图片
@@ -451,11 +476,10 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         likeMapper.delete(new LambdaQueryWrapper<LikeRecord>().eq(LikeRecord::getPostId, id));
         // 删除帖子redis的点赞数据
         try {
-            redisTemplate.delete(KeyConstant.LIKE_KEY + id);
+            redisUtil.delete(List.of(KeyConstant.LIKE_KEY + id, KeyConstant.LIKE_COUNT + id));
         } catch (Exception e) {
             log.error("删除帖子点赞数据失败", e);
         }
-        redisTemplate.delete(KeyConstant.LIKE_COUNT + id);
         // 删除Elasticsearch的数据
         postElasticsearchRepository.deleteById(id);
 
@@ -469,7 +493,9 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
     }
 
     private List<Long> getFanIds(Long userId) {
-        Set<Object> fans = redisTemplate.opsForZSet().range(KeyConstant.FANS_LIST_KEY + userId, 0, -1);
+        // 先走 DataCacheUtil 的回源：缓存 miss 时从 follow 表加载并回填双列表，否则粉丝将永久漏帖
+        dataCacheUtil.ensureFollowDataLoaded(userId);
+        Set<Object> fans = redisUtil.zsets().range(KeyConstant.FANS_LIST_KEY + userId, 0, -1);
         if (fans == null || fans.isEmpty()) {
             return List.of();
         }
@@ -508,23 +534,15 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         }
         Long userId = userIdUtil.getUserId();
         String identifier = userId != null ? "u:" + userId : "ip:" + getClientIp();
-        String cooldownKey = KeyConstant.POST_VIEW_COOLDOWN + identifier + ":" + postId;
-        // 使用 setIfAbsent 原子操作，避免 hasKey + set 之间的竞态条件
-        Boolean acquired = redisTemplate.opsForValue().setIfAbsent(cooldownKey, 1, 20, TimeUnit.SECONDS);
-        if (!Boolean.TRUE.equals(acquired)) {
-            return Result.ok("已浏览");
-        }
-        // 增加浏览量
-        String viewCountKey = KeyConstant.POST_VIEW_COUNT + postId;
-        redisTemplate.opsForValue().increment(viewCountKey);
-        return Result.ok("浏览成功");
+        boolean recorded = viewCountCacheUtil.recordView(postId, identifier);
+        return recorded ? Result.ok("浏览成功") : Result.ok("已浏览");
     }
 
     @Override
     public Result migratePostListToHomePost() {
         String postListKey = KeyConstant.POST_LIST_KEY;
         // 读取 Redis 中所有帖子ID（按分数正序，即时间正序）
-        Set<ZSetOperations.TypedTuple<Object>> typedTuples = redisTemplate.opsForZSet()
+        Set<ZSetOperations.TypedTuple<Object>> typedTuples = redisUtil.zsets()
                 .rangeWithScores(postListKey, 0, -1);
         if (typedTuples == null || typedTuples.isEmpty()) {
             return Result.ok("Redis 中无帖子数据", 0);
@@ -579,6 +597,10 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         List<Post> posts = postMapper.selectBatchIds(ids);
         posts.forEach(p -> postMap.put(p.getId(), p));
 
+        // 批量读取点赞数与点赞状态（pipeline 一次往返）
+        Map<Long, Integer> likeCounts = dataCacheUtil.getLikeCounts(ids);
+        Map<Long, Boolean> likedMap = dataCacheUtil.isLikedBatch(userId, ids);
+
         List<Long> userIds = posts.stream()
                 .filter(Post::getEnabled)
                 .map(Post::getUserId)
@@ -601,12 +623,8 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
             if (author != null) {
                 postVO.setUsername(author.getUsername());
             }
-            postVO.setLikeCount(dataCacheUtil.getLikeCount(id));
-            if (userId == null) {
-                postVO.setLiked(false);
-            } else {
-                postVO.setLiked(dataCacheUtil.isLiked(id, userId));
-            }
+            postVO.setLikeCount(likeCounts.getOrDefault(id, 0));
+            postVO.setLiked(userId == null ? false : likedMap.getOrDefault(id, false));
             postVOS.add(postVO);
         }
         int newOffset = 1;

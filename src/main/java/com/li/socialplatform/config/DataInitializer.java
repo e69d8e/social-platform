@@ -1,8 +1,10 @@
 package com.li.socialplatform.config;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.li.socialplatform.common.constant.CacheTtl;
 import com.li.socialplatform.common.constant.KeyConstant;
 import com.li.socialplatform.common.utils.HtmlUtils;
+import com.li.socialplatform.common.utils.RedisUtil;
 import com.li.socialplatform.pojo.entity.Category;
 import com.li.socialplatform.pojo.entity.HomePost;
 import com.li.socialplatform.pojo.entity.Post;
@@ -19,11 +21,12 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
 import org.springframework.data.elasticsearch.core.IndexOperations;
-import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Component;
 
 import java.time.ZoneId;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -44,7 +47,7 @@ public class DataInitializer implements ApplicationRunner {
     private final PostElasticsearchRepository postElasticsearchRepository;
     private final UserElasticsearchRepository userElasticsearchRepository;
     private final ElasticsearchOperations elasticsearchOperations;
-    private final RedisTemplate<String, Object> redisTemplate;
+    private final RedisUtil redisUtil;
 
     @Override
     public void run(ApplicationArguments args) {
@@ -100,16 +103,23 @@ public class DataInitializer implements ApplicationRunner {
         }
 
         // 预热 Redis 首页 ZSet 缓存
-        Long zsetSize = redisTemplate.opsForZSet().size(homePostKey);
+        Long zsetSize = redisUtil.zsets().size(homePostKey);
         if (zsetSize == null || zsetSize == 0) {
+            Map<Object, Double> memberScores = new HashMap<>(allPosts.size());
             for (Post p : allPosts) {
                 double score = p.getCreateTime() != null
                         ? p.getCreateTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
                         : (double) System.currentTimeMillis();
-                redisTemplate.opsForZSet().add(homePostKey, p.getId(), score);
-                redisTemplate.opsForZSet().add(KeyConstant.POST_LIST_KEY, p.getId(), score);
+                memberScores.put(p.getId(), score);
             }
-            redisTemplate.expire(homePostKey, 7, TimeUnit.DAYS);
+            // pipeline 批量预热首页与全站帖子缓存
+            redisUtil.pipeline(ops -> {
+                for (Map.Entry<Object, Double> entry : memberScores.entrySet()) {
+                    ops.opsForZSet().add(homePostKey, entry.getKey(), entry.getValue());
+                    ops.opsForZSet().add(KeyConstant.POST_LIST_KEY, entry.getKey(), entry.getValue());
+                }
+            });
+            redisUtil.expire(homePostKey, CacheTtl.DEFAULT_DAYS, TimeUnit.DAYS);
             log.info("已将 {} 条帖子预热至 Redis 首页缓存 ({})", allPosts.size(), homePostKey);
         }
     }
@@ -168,13 +178,13 @@ public class DataInitializer implements ApplicationRunner {
 
     private void initCategoryCache() {
         String key = KeyConstant.CATEGORY_LIST_KEY;
-        Long size = redisTemplate.opsForList().size(key);
+        Long size = redisUtil.lists().size(key);
         if (size == null || size == 0) {
             List<Category> categories = categoryMapper.selectList(new LambdaQueryWrapper<>());
-            for (Category category : categories) {
-                redisTemplate.opsForList().rightPush(key, category);
+            if (!categories.isEmpty()) {
+                redisUtil.lists().rightPushAll(key, categories.toArray());
+                redisUtil.expire(key, CacheTtl.CATEGORY_MINUTES, TimeUnit.MINUTES);
             }
-            redisTemplate.expire(key, 10, TimeUnit.MINUTES);
             log.info("已预热 {} 个分类到 Redis 缓存", categories.size());
         }
     }

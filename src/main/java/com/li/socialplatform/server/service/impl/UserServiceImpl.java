@@ -1,6 +1,7 @@
 package com.li.socialplatform.server.service.impl;
 
 import cn.hutool.core.bean.BeanUtil;
+import co.elastic.clients.elasticsearch._types.FieldValue;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.li.socialplatform.common.constant.KeyConstant;
@@ -9,6 +10,8 @@ import com.li.socialplatform.common.properties.SystemConstants;
 import com.li.socialplatform.common.utils.DataCacheUtil;
 import com.li.socialplatform.common.utils.DeleteFileUtil;
 import com.li.socialplatform.common.utils.JwtUtils;
+import com.li.socialplatform.common.utils.RedisUtil;
+import com.li.socialplatform.common.utils.TokenCacheUtil;
 import com.li.socialplatform.common.utils.UserIdUtil;
 import com.li.socialplatform.pojo.dto.LoginDTO;
 import com.li.socialplatform.pojo.dto.RefreshDTO;
@@ -38,9 +41,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
+import org.springframework.data.elasticsearch.client.elc.NativeQuery;
 import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
 import org.springframework.data.redis.connection.BitFieldSubCommands;
-import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.DisabledException;
@@ -57,8 +60,6 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
 
-import static com.li.socialplatform.common.constant.KeyConstant.TOKEN_BLACKLIST_KEY;
-
 /**
  * @author e69d8e
  * @since 2025/12/8 15:45
@@ -70,7 +71,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
     private final UserMapper userMapper;
     private final SystemConstants systemConstants;
-    private final RedisTemplate<String, Object> redisTemplate;
+    private final RedisUtil redisUtil;
+    private final TokenCacheUtil tokenCacheUtil;
     private final UserIdUtil userIdUtil;
     private final UserElasticsearchRepository userElasticsearchRepository;
     private final PostElasticsearchRepository postElasticsearchRepository;
@@ -124,7 +126,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
         String accessToken = jwtUtils.generateToken(username, accessExpire);
         String refreshToken = jwtUtils.generateToken(username, refreshExpire);
-        redisTemplate.opsForValue().set(KeyConstant.REFRESH_KEY + username, refreshToken, refreshExpire, TimeUnit.MILLISECONDS);
+        tokenCacheUtil.setRefreshToken(username, refreshToken, refreshExpire, TimeUnit.MILLISECONDS);
 
         return Result.ok(MessageConstant.USER_LOGIN_SUCCESS, new TokenVO(accessToken, refreshToken));
     }
@@ -146,7 +148,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         }
         String username = claims.getSubject();
         // 2. 从 Redis 中获取保存的 refreshToken 并比对
-        String storedRefreshToken = (String) redisTemplate.opsForValue().get(KeyConstant.REFRESH_KEY + username);
+        String storedRefreshToken = tokenCacheUtil.getRefreshToken(username);
         if (!refreshToken.equals(storedRefreshToken)) {
             return Result.error("refresh token 不匹配或已失效");
         }
@@ -155,7 +157,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         // 4. 生成新的 token
         String newAccessToken = jwtUtils.generateToken(username, accessExpire);
         String newRefreshToken = jwtUtils.generateToken(username, refreshExpire);
-        redisTemplate.opsForValue().set(KeyConstant.REFRESH_KEY + username, newRefreshToken, refreshExpire, TimeUnit.MILLISECONDS);
+        tokenCacheUtil.setRefreshToken(username, newRefreshToken, refreshExpire, TimeUnit.MILLISECONDS);
         return Result.ok(new TokenVO(newAccessToken, newRefreshToken));
     }
 
@@ -167,7 +169,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
                 String jti = jwtUtils.getTokenId(token);
                 long remaining = jwtUtils.getRemainingExpiration(token);
                 if (remaining > 0) {
-                    redisTemplate.opsForValue().set(TOKEN_BLACKLIST_KEY + jti, "", remaining, TimeUnit.MILLISECONDS);
+                    tokenCacheUtil.blacklistToken(jti, remaining);
                 }
             } catch (Exception e) {
                 log.warn("将 token 加入黑名单失败: {}", e.getMessage());
@@ -178,7 +180,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
     @Override
     public Result logout(HttpServletRequest request) {
         String username = getCurrentUsername();
-        redisTemplate.delete(KeyConstant.REFRESH_KEY + username);
+        tokenCacheUtil.deleteRefreshToken(username);
         blacklistAccessToken(request);
         return Result.ok(MessageConstant.USER_LOGOUT_SUCCESS, "");
     }
@@ -311,9 +313,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         // 获取今天是当月的第几天
         int day = now.getDayOfMonth();
         // 设置签到
-        redisTemplate.opsForValue().setBit(key, day - 1, true);
+        redisUtil.values().setBit(key, day - 1, true);
         // 计算当月截至今天连续签到次数
-        List<Long> longs = redisTemplate.opsForValue().bitField(key, BitFieldSubCommands.create().get(BitFieldSubCommands.BitFieldType.unsigned(day)).valueAt(0) // 从第0位开始读取
+        List<Long> longs = redisUtil.values().bitField(key, BitFieldSubCommands.create().get(BitFieldSubCommands.BitFieldType.unsigned(day)).valueAt(0) // 从第0位开始读取
         );
         // 0000000011
         Long tmp = null;
@@ -336,7 +338,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
     public Result signInCount() {
         LocalDateTime now = LocalDateTime.now();
         String key = KeyConstant.SIGN_IN_KEY + getCurrentUsername() + now.format(DateTimeFormatter.ofPattern("yyyyMM"));
-        List<Long> longs = redisTemplate.opsForValue().bitField(key, BitFieldSubCommands.create().get(BitFieldSubCommands.BitFieldType.unsigned(now.getDayOfMonth())).valueAt(0) // 从第0位开始读取
+        List<Long> longs = redisUtil.values().bitField(key, BitFieldSubCommands.create().get(BitFieldSubCommands.BitFieldType.unsigned(now.getDayOfMonth())).valueAt(0) // 从第0位开始读取
         );
         Long tmp = null;
         if (longs != null) {
@@ -360,22 +362,26 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         Pageable pageable = PageRequest.of(pageNum - 1, pageSize, sort);
         List<Post> posts;
         Long total;
+        // 所有搜索入口都只返回未封禁（enabled=true）的帖子，与推荐流 getScrollResult 行为一致
         if (StringUtils.isEmpty(keyword)) {
             if (categoryId == null) {
-                posts = postElasticsearchRepository.findAll(pageable).getContent();
-                total = postElasticsearchRepository.count();
+                posts = postElasticsearchRepository.findByEnabledTrue(pageable);
+                total = postElasticsearchRepository.countByEnabledTrue();
             } else {
-                posts = postElasticsearchRepository.findByCategoryId(categoryId, pageable);
-                total = postElasticsearchRepository.countByCategoryId(categoryId);
+                posts = postElasticsearchRepository.findByCategoryIdAndEnabledTrue(categoryId, pageable);
+                total = postElasticsearchRepository.countByCategoryIdAndEnabledTrue(categoryId);
             }
         } else {
-            if (categoryId == null) {
-                posts = postElasticsearchRepository.findByTitleOrContent(keyword, keyword, pageable);
-                total = postElasticsearchRepository.countByTitleOrContent(keyword, keyword);
-            } else {
-                posts = postElasticsearchRepository.findByTitleOrContentAndCategoryId(keyword, keyword, categoryId, pageable);
-                total = postElasticsearchRepository.countByTitleOrContentAndCategoryId(keyword, keyword, categoryId);
-            }
+            posts = postElasticsearchRepository.searchByKeywordAndEnabled(keyword, pageable);
+            // count 与仓库 @Query 搜索同条件；不用派生 count，Or 混合 And 时方法名拆分语义易错
+            NativeQuery countQuery = NativeQuery.builder()
+                    .withQuery(q -> q.bool(b -> b
+                            .should(s -> s.match(m -> m.field("title").query(keyword)))
+                            .should(s -> s.match(m -> m.field("content").query(keyword)))
+                            .minimumShouldMatch("1")
+                            .filter(f -> f.term(t -> t.field("enabled").value(FieldValue.of(true))))))
+                    .build();
+            total = elasticsearchOperations.count(countQuery, Post.class);
         }
         if (!StringUtils.isEmpty(keyword)) {
             searchHistoryService.recordSearch(keyword, 0);
@@ -395,18 +401,18 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
         List<PostVO> postVOS = new ArrayList<>();
         Long userId = userIdUtil.getUserId();
+        // 批量读取点赞数与点赞状态（pipeline 一次往返）
+        List<Long> postIds = posts.stream().map(Post::getId).toList();
+        Map<Long, Integer> likeCounts = dataCacheUtil.getLikeCounts(postIds);
+        Map<Long, Boolean> likedMap = dataCacheUtil.isLikedBatch(userId, postIds);
         for (Post post : posts) {
             PostVO postVO = BeanUtil.copyProperties(post, PostVO.class);
             User author = userMap.get(post.getUserId());
             if (author != null) {
                 postVO.setUsername(author.getUsername());
             }
-            if (userId == null) {
-                postVO.setLiked(false);
-            } else {
-                postVO.setLiked(dataCacheUtil.isLiked(post.getId(), userId));
-            }
-            postVO.setLikeCount(dataCacheUtil.getLikeCount(post.getId()));
+            postVO.setLiked(likedMap.getOrDefault(post.getId(), false));
+            postVO.setLikeCount(likeCounts.getOrDefault(post.getId(), 0));
             postVOS.add(postVO);
         }
         return Result.ok(postVOS, total);
@@ -417,11 +423,13 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         Sort sort = Sort.by(Sort.Direction.DESC, "fansCount");
         Pageable pageable = PageRequest.of(pageNum - 1, pageSize, sort);
         List<User> users = userElasticsearchRepository.findByUsernameOrNickname(keyword, keyword, pageable);
-        // 使用 ElasticsearchOperations 统一 count 查询（与 find 使用相同的 edge_ngram 查询）
+        // 使用 ElasticsearchOperations 统一 count 查询（与 find 使用相同的 edge_ngram 查询 + enabled 过滤）
         long total = 0;
         if (!users.isEmpty()) {
-            org.springframework.data.elasticsearch.client.elc.NativeQuery countQuery = org.springframework.data.elasticsearch.client.elc.NativeQuery.builder()
-                    .withQuery(q -> q.multiMatch(mm -> mm.fields("username.edge", "nickname.edge").query(keyword)))
+            NativeQuery countQuery = NativeQuery.builder()
+                    .withQuery(q -> q.bool(b -> b
+                            .must(m -> m.multiMatch(mm -> mm.fields("username.edge", "nickname.edge").query(keyword)))
+                            .filter(f -> f.term(t -> t.field("enabled").value(FieldValue.of(true))))))
                     .build();
             total = elasticsearchOperations.count(countQuery, User.class);
         }
@@ -431,12 +439,16 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         if (users.isEmpty()) {
             return Result.ok(List.of(), 0L);
         }
-        List<UserVO> userVOS = new ArrayList<>();
         Long currentUserId = userIdUtil.getUserId();
+        List<Long> resultUserIds = users.stream().map(User::getId).toList();
+        // 批量读取粉丝数与关注状态（pipeline 一次往返）
+        Map<Long, Integer> fansCounts = dataCacheUtil.getFollowerCounts(resultUserIds);
+        Map<Long, Boolean> followedMap = dataCacheUtil.isFollowedBatch(currentUserId, resultUserIds);
+        List<UserVO> userVOS = new ArrayList<>();
         for (User user : users) {
             UserVO userVO = BeanUtil.copyProperties(user, UserVO.class);
-            userVO.setFollowed(currentUserId != null && dataCacheUtil.isFollowed(currentUserId, user.getId()));
-            userVO.setFansCount(dataCacheUtil.getFollowerCount(user.getId()));
+            userVO.setFollowed(followedMap.getOrDefault(user.getId(), false));
+            userVO.setFansCount(fansCounts.getOrDefault(user.getId(), 0));
             userVOS.add(userVO);
         }
         return Result.ok(userVOS, total);

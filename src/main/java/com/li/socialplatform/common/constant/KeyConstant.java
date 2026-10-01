@@ -29,4 +29,18 @@ public class KeyConstant {
     public static final String USER_INBOX_KEY = "user-inbox:";
     public static final String SLIDE_CAPTCHA_KEY = "slide:captcha:";
     public static final String SLIDE_VERIFY_KEY = "slide:verify:";
+    public static final String USER_ROLE_KEY = "user-role:";
+
+    // ==================== 空结果防穿透标记（业务缓存查空时写入，短 TTL） ====================
+
+    /** 用户关注/粉丝数据已从 DB 加载（ZSet 无法表达空集合，需独立标记） */
+    public static final String FOLLOW_LOADED_KEY = "follow-loaded:";
+    /** 全局封禁用户列表为空标记 */
+    public static final String BAN_USER_EMPTY_KEY = "ban-user-empty:";
+    /** 审核员封禁帖子列表为空标记 */
+    public static final String BAN_POST_EMPTY_KEY = "ban-post-empty:";
+    /** 首页帖子列表为空标记 */
+    public static final String HOME_POST_EMPTY_KEY = "home-post-empty:";
+    /** 用户兴趣分为空标记 */
+    public static final String INTEREST_LOADED_KEY = "interest-loaded:";
 }

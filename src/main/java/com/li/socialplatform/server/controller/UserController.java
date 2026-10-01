@@ -34,6 +34,7 @@ public class UserController {
 
     @PostMapping("/login")
     @Operation(summary = "登录", description = "用户名密码登录，返回accessToken和refreshToken")
+    @RateLimit(maxRequests = 10, timeWindow = 300, limitType = RateLimit.LimitType.IP)
     public Result login(@Valid @RequestBody LoginDTO loginDTO) {
         return userService.login(loginDTO);
     }

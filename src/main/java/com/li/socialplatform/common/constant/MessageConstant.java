@@ -52,6 +52,7 @@ public class MessageConstant {
     public static final String USER_LOGOUT_SUCCESS = "注销成功";
     public static final String USER_NOT_ENABLED = "用户被封禁";
     public static final String SESSION_NOT_EXIST = "会话不存在";
+    public static final String SESSION_NO_PERMISSION = "无权访问该会话";
 
     // 私信
     public static final String RECEIVER_NOT_EXIST = "接收方用户不存在";

@@ -1,6 +1,7 @@
 package com.li.socialplatform.common.utils;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.li.socialplatform.common.constant.CacheTtl;
 import com.li.socialplatform.common.constant.KeyConstant;
 import com.li.socialplatform.pojo.entity.Follow;
 import com.li.socialplatform.pojo.entity.LikeRecord;
@@ -8,7 +9,6 @@ import com.li.socialplatform.server.mapper.FollowMapper;
 import com.li.socialplatform.server.mapper.LikeMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.stereotype.Component;
 
 import java.time.ZoneId;
@@ -17,6 +17,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
+ * 点赞/关注数据的统一缓存组件（Cache-Aside，读时回源 DB 并回填 Redis）
+ * - 批量查询走 pipeline，一次网络往返
+ * - 空结果通过标记 key 防穿透，避免反复打 DB
+ *
  * @author e69d8e
  * @since 2026/05/23
  */
@@ -25,11 +29,9 @@ import java.util.stream.Collectors;
 @Slf4j
 public class DataCacheUtil {
 
-    private final RedisTemplate<String, Object> redisTemplate;
+    private final RedisUtil redisUtil;
     private final LikeMapper likeMapper;
     private final FollowMapper followMapper;
-
-    private static final long CACHE_TTL_DAYS = 7;
 
     // ==================== 点赞 ====================
 
@@ -37,51 +39,100 @@ public class DataCacheUtil {
         if (postId == null || userId == null) {
             return false;
         }
-        String key = KeyConstant.LIKE_KEY + postId;
-        Boolean member = redisTemplate.opsForSet().isMember(key, userId);
-        if (member != null) {
-            return member;
+        ensureLikeDataLoaded(postId);
+        return Boolean.TRUE.equals(redisUtil.sets().isMember(KeyConstant.LIKE_KEY + postId, userId));
+    }
+
+    /**
+     * 批量判断用户是否点赞了多个帖子（pipeline 一次往返）
+     */
+    public Map<Long, Boolean> isLikedBatch(Long userId, Collection<Long> postIds) {
+        Map<Long, Boolean> result = new HashMap<>();
+        if (userId == null || postIds == null || postIds.isEmpty()) {
+            return result;
         }
-        // 缓存未命中，从 DB 加载
-        loadLikeDataFromDB(postId);
-        return Boolean.TRUE.equals(redisTemplate.opsForSet().isMember(key, userId));
+        List<Long> ids = postIds.stream().filter(Objects::nonNull).distinct().toList();
+        // getLikeCounts 内部保证所有帖子的点赞数据已加载（count key 同时是加载标记）
+        getLikeCounts(ids);
+        List<Object> members = redisUtil.pipeline(ops -> {
+            for (Long id : ids) {
+                ops.opsForSet().isMember(KeyConstant.LIKE_KEY + id, userId);
+            }
+        });
+        for (int i = 0; i < ids.size(); i++) {
+            result.put(ids.get(i), Boolean.TRUE.equals(members.get(i)));
+        }
+        return result;
     }
 
     public int getLikeCount(Long postId) {
-        String key = KeyConstant.LIKE_COUNT + postId;
-        Object value = redisTemplate.opsForValue().get(key);
-        if (value != null) {
-            return value instanceof Number ? ((Number) value).intValue() : 0;
+        if (postId == null) {
+            return 0;
         }
-        // 缓存未命中，从 DB 加载
-        loadLikeDataFromDB(postId);
-        Object reloaded = redisTemplate.opsForValue().get(key);
-        return reloaded instanceof Number ? ((Number) reloaded).intValue() : 0;
+        Object value = redisUtil.get(KeyConstant.LIKE_COUNT + postId);
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        return loadLikeDataFromDB(postId);
     }
 
-    private void loadLikeDataFromDB(Long postId) {
+    /**
+     * 批量获取帖子点赞数（pipeline 一次往返，仅未命中的帖子回源 DB）
+     */
+    public Map<Long, Integer> getLikeCounts(Collection<Long> postIds) {
+        Map<Long, Integer> result = new HashMap<>();
+        if (postIds == null || postIds.isEmpty()) {
+            return result;
+        }
+        List<Long> ids = postIds.stream().filter(Objects::nonNull).distinct().toList();
+        List<Object> values = redisUtil.pipeline(ops -> {
+            for (Long id : ids) {
+                ops.opsForValue().get(KeyConstant.LIKE_COUNT + id);
+            }
+        });
+        List<Long> missed = new ArrayList<>();
+        for (int i = 0; i < ids.size(); i++) {
+            Object value = values.get(i);
+            if (value instanceof Number number) {
+                result.put(ids.get(i), number.intValue());
+            } else {
+                missed.add(ids.get(i));
+            }
+        }
+        for (Long id : missed) {
+            result.put(id, loadLikeDataFromDB(id));
+        }
+        return result;
+    }
+
+    private void ensureLikeDataLoaded(Long postId) {
+        // count key 在回源时总是写入（含 0），作为"点赞数据已加载"标记，空数据不重复打 DB
+        if (!Boolean.TRUE.equals(redisUtil.hasKey(KeyConstant.LIKE_COUNT + postId))) {
+            loadLikeDataFromDB(postId);
+        }
+    }
+
+    /** 从 DB 加载帖子点赞数据并回填缓存，返回点赞数 */
+    private int loadLikeDataFromDB(Long postId) {
         String setKey = KeyConstant.LIKE_KEY + postId;
         String countKey = KeyConstant.LIKE_COUNT + postId;
 
         List<LikeRecord> records = likeMapper.selectList(
                 new LambdaQueryWrapper<LikeRecord>().eq(LikeRecord::getPostId, postId));
 
-        if (records.isEmpty()) {
-            // 标记空缓存，防止缓存穿透
-            redisTemplate.opsForValue().set(countKey, 0, CACHE_TTL_DAYS, TimeUnit.DAYS);
-            return;
+        redisUtil.set(countKey, records.size(), CacheTtl.DEFAULT_DAYS, TimeUnit.DAYS);
+        if (!records.isEmpty()) {
+            redisUtil.sets().add(setKey, records.stream()
+                    .map(r -> (Object) r.getUserId()).distinct().toArray());
+            redisUtil.expire(setKey, CacheTtl.DEFAULT_DAYS, TimeUnit.DAYS);
         }
-
-        redisTemplate.opsForSet().add(setKey, records.stream()
-                .map(r -> (Object) r.getUserId()).distinct().toArray());
-        redisTemplate.expire(setKey, CACHE_TTL_DAYS, TimeUnit.DAYS);
-        redisTemplate.opsForValue().set(countKey, records.size(), CACHE_TTL_DAYS, TimeUnit.DAYS);
         log.debug("从DB加载帖子 {} 点赞数据: {} 条", postId, records.size());
+        return records.size();
     }
 
     public void setLikeTTL(Long postId) {
-        redisTemplate.expire(KeyConstant.LIKE_KEY + postId, CACHE_TTL_DAYS, TimeUnit.DAYS);
-        redisTemplate.expire(KeyConstant.LIKE_COUNT + postId, CACHE_TTL_DAYS, TimeUnit.DAYS);
+        redisUtil.expire(KeyConstant.LIKE_KEY + postId, CacheTtl.DEFAULT_DAYS, TimeUnit.DAYS);
+        redisUtil.expire(KeyConstant.LIKE_COUNT + postId, CacheTtl.DEFAULT_DAYS, TimeUnit.DAYS);
     }
 
     // ==================== 关注 ====================
@@ -90,63 +141,131 @@ public class DataCacheUtil {
         if (userId == null || targetUserId == null) {
             return false;
         }
-        Double score = redisTemplate.opsForZSet().score(KeyConstant.Follow_LIST_KEY + userId, targetUserId);
-        if (score != null) {
-            return true;
+        ensureFollowDataLoaded(userId);
+        return redisUtil.zsets().score(KeyConstant.Follow_LIST_KEY + userId, targetUserId) != null;
+    }
+
+    /**
+     * 批量判断当前用户是否关注了多个目标用户（pipeline 一次往返）
+     */
+    public Map<Long, Boolean> isFollowedBatch(Long userId, Collection<Long> targetUserIds) {
+        Map<Long, Boolean> result = new HashMap<>();
+        if (userId == null || targetUserIds == null || targetUserIds.isEmpty()) {
+            return result;
         }
-        // 缓存未命中，从 DB 加载
-        loadFollowDataFromDB(userId, targetUserId);
-        return redisTemplate.opsForZSet().score(KeyConstant.Follow_LIST_KEY + userId, targetUserId) != null;
+        List<Long> ids = targetUserIds.stream().filter(Objects::nonNull).distinct().toList();
+        ensureFollowDataLoaded(userId);
+        List<Object> scores = redisUtil.pipeline(ops -> {
+            for (Long id : ids) {
+                ops.opsForZSet().score(KeyConstant.Follow_LIST_KEY + userId, id);
+            }
+        });
+        for (int i = 0; i < ids.size(); i++) {
+            result.put(ids.get(i), scores.get(i) != null);
+        }
+        return result;
     }
 
     public int getFollowerCount(Long userId) {
-        Object value = redisTemplate.opsForValue().get(KeyConstant.FOLLOW_COUNT_KEY + userId);
-        if (value != null) {
-            return value instanceof Number ? ((Number) value).intValue() : 0;
+        if (userId == null) {
+            return 0;
         }
-        loadFollowDataFromDB(userId, null);
-        Object reloaded = redisTemplate.opsForValue().get(KeyConstant.FOLLOW_COUNT_KEY + userId);
-        return reloaded instanceof Number ? ((Number) reloaded).intValue() : 0;
+        Object value = redisUtil.get(KeyConstant.FOLLOW_COUNT_KEY + userId);
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        return loadFollowDataFromDB(userId);
     }
 
-    private void loadFollowDataFromDB(Long userId, Long targetUserId) {
+    /**
+     * 批量获取用户粉丝数（pipeline 一次往返，仅未命中的用户回源 DB）
+     */
+    public Map<Long, Integer> getFollowerCounts(Collection<Long> userIds) {
+        Map<Long, Integer> result = new HashMap<>();
+        if (userIds == null || userIds.isEmpty()) {
+            return result;
+        }
+        List<Long> ids = userIds.stream().filter(Objects::nonNull).distinct().toList();
+        List<Object> values = redisUtil.pipeline(ops -> {
+            for (Long id : ids) {
+                ops.opsForValue().get(KeyConstant.FOLLOW_COUNT_KEY + id);
+            }
+        });
+        List<Long> missed = new ArrayList<>();
+        for (int i = 0; i < ids.size(); i++) {
+            Object value = values.get(i);
+            if (value instanceof Number number) {
+                result.put(ids.get(i), number.intValue());
+            } else {
+                missed.add(ids.get(i));
+            }
+        }
+        for (Long id : missed) {
+            result.put(id, loadFollowDataFromDB(id));
+        }
+        return result;
+    }
+
+    /**
+     * 确保用户关注/粉丝缓存已加载（供列表页等直接读取 ZSet 的场景调用）
+     */
+    public void ensureFollowDataLoaded(Long userId) {
+        if (userId == null) {
+            return;
+        }
+        String listKey = KeyConstant.Follow_LIST_KEY + userId;
+        String loadedKey = KeyConstant.FOLLOW_LOADED_KEY + userId;
+        if (Boolean.TRUE.equals(redisUtil.hasKey(listKey))
+                || Boolean.TRUE.equals(redisUtil.hasKey(loadedKey))) {
+            return;
+        }
+        loadFollowDataFromDB(userId);
+    }
+
+    /** 从 DB 加载用户关注/粉丝数据并回填缓存，返回粉丝数 */
+    private int loadFollowDataFromDB(Long userId) {
         // 加载粉丝数据（关注 userId 的人）
         List<Follow> fans = followMapper.selectList(
                 new LambdaQueryWrapper<Follow>().eq(Follow::getFolloweeId, userId));
+        String fansKey = KeyConstant.FANS_LIST_KEY + userId;
         if (!fans.isEmpty()) {
-            String fansKey = KeyConstant.FANS_LIST_KEY + userId;
-            for (Follow f : fans) {
-                double score = f.getCreateTime() != null
-                        ? f.getCreateTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-                        : (double) System.currentTimeMillis();
-                redisTemplate.opsForZSet().add(fansKey, f.getFollowerId(), score);
-            }
-            redisTemplate.expire(fansKey, CACHE_TTL_DAYS, TimeUnit.DAYS);
-            redisTemplate.opsForValue().set(KeyConstant.FOLLOW_COUNT_KEY + userId, fans.size(), CACHE_TTL_DAYS, TimeUnit.DAYS);
-        } else {
-            redisTemplate.opsForValue().set(KeyConstant.FOLLOW_COUNT_KEY + userId, 0, CACHE_TTL_DAYS, TimeUnit.DAYS);
+            Map<Object, Double> memberScores = toMemberScores(fans, Follow::getFollowerId);
+            redisUtil.zAddAll(fansKey, memberScores);
+            redisUtil.expire(fansKey, CacheTtl.DEFAULT_DAYS, TimeUnit.DAYS);
         }
+        // 粉丝计数总是写入（含 0），作为粉丝数据的回源结果
+        redisUtil.set(KeyConstant.FOLLOW_COUNT_KEY + userId, fans.size(), CacheTtl.DEFAULT_DAYS, TimeUnit.DAYS);
 
         // 加载关注数据（userId 关注的人）
         List<Follow> followees = followMapper.selectList(
                 new LambdaQueryWrapper<Follow>().eq(Follow::getFollowerId, userId));
+        String followKey = KeyConstant.Follow_LIST_KEY + userId;
         if (!followees.isEmpty()) {
-            String followKey = KeyConstant.Follow_LIST_KEY + userId;
-            for (Follow f : followees) {
-                double score = f.getCreateTime() != null
-                        ? f.getCreateTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-                        : (double) System.currentTimeMillis();
-                redisTemplate.opsForZSet().add(followKey, f.getFolloweeId(), score);
-            }
-            redisTemplate.expire(followKey, CACHE_TTL_DAYS, TimeUnit.DAYS);
+            Map<Object, Double> memberScores = toMemberScores(followees, Follow::getFolloweeId);
+            redisUtil.zAddAll(followKey, memberScores);
+            redisUtil.expire(followKey, CacheTtl.DEFAULT_DAYS, TimeUnit.DAYS);
         }
+        // ZSet 无法表达空集合，用短 TTL 标记防止"关注了 0 人"的用户反复打 DB
+        redisUtil.set(KeyConstant.FOLLOW_LOADED_KEY + userId, 1,
+                CacheTtl.EMPTY_MARKER_MINUTES, TimeUnit.MINUTES);
 
         log.debug("从DB加载用户 {} 关注/粉丝数据: {} 粉丝, {} 关注", userId, fans.size(), followees.size());
+        return fans.size();
+    }
+
+    private Map<Object, Double> toMemberScores(List<Follow> follows,
+                                               java.util.function.Function<Follow, Long> memberIdGetter) {
+        return follows.stream().collect(Collectors.toMap(
+                f -> (Object) memberIdGetter.apply(f),
+                f -> f.getCreateTime() != null
+                        ? f.getCreateTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                        : (double) System.currentTimeMillis(),
+                (a, b) -> a));
     }
 
     public void setFollowTTL(Long userId, Long targetUserId) {
-        redisTemplate.expire(KeyConstant.FOLLOW_COUNT_KEY + targetUserId, CACHE_TTL_DAYS, TimeUnit.DAYS);
-        redisTemplate.expire(KeyConstant.FANS_LIST_KEY + targetUserId, CACHE_TTL_DAYS, TimeUnit.DAYS);
-        redisTemplate.expire(KeyConstant.Follow_LIST_KEY + userId, CACHE_TTL_DAYS, TimeUnit.DAYS);
+        redisUtil.expire(KeyConstant.FOLLOW_COUNT_KEY + targetUserId, CacheTtl.DEFAULT_DAYS, TimeUnit.DAYS);
+        redisUtil.expire(KeyConstant.FANS_LIST_KEY + targetUserId, CacheTtl.DEFAULT_DAYS, TimeUnit.DAYS);
+        redisUtil.expire(KeyConstant.Follow_LIST_KEY + userId, CacheTtl.DEFAULT_DAYS, TimeUnit.DAYS);
     }
 }
