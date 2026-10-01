@@ -146,7 +146,9 @@ flowchart TB
   - `5601`：（可选）Kibana 控制台
   - `8081`：（可选）Spring Boot 直连端口
 
-> ℹ️ **安全说明**：MySQL(`3306`) / Redis(`6379`) / Elasticsearch(`9200`) / MongoDB(`27017`) 等数据端口已在 `docker-compose.yml` 中绑定 `127.0.0.1` 回环地址，仅宿主机本地（含本地 IDEA 开发模式）可访问，**无需也无法在安全组放行**；如需远程管理请使用 SSH 隧道（例如 `ssh -L 3306:127.0.0.1:3306 user@server`）。由于 Kibana(5601) 与 Elasticsearch 均未启用认证，若保持 `5601` 对外，请在安全组中仅对可信 IP 放行。
+> ℹ️ **安全说明**：MySQL(`3306`) / Redis(`6379`) / Elasticsearch(`9200`) / MongoDB(`27017`) 等数据端口已在 `docker-compose.yml` 中绑定 `127.0.0.1` 回环地址，仅宿主机本地（含本地 IDEA 开发模式）可访问，**无需也无法在安全组放行**；如需远程管理请使用 SSH 隧道（例如 `ssh -L 3306:127.0.0.1:3306 user@server`）。Elasticsearch 已启用认证（用户 `elastic`，密码为 `.env` 中的 `PASSWORD`），Spring Boot 客户端、Kibana 登录与健康检查均已接入该凭证；由于 Kibana(5601) 自身无独立认证体系，若保持 `5601` 对外，请在安全组中仅对可信 IP 放行。
+>
+> ℹ️ **内存说明**：已为各容器配置 `mem_limit` 内存上限（总上限约 5GB：sp-app 1g、sp-es 1g、sp-kibana 1g、sp-mysql 768m、sp-mongodb 512m、sp-redis 320m、sp-nginx 128m），避免单个容器拖垮宿主机。
 
 ---
 
@@ -247,7 +249,7 @@ docker compose ps
 | 🌐 **平台前端主页** | `http://<服务器IP>:8080` | 前端 SPA 页面（自动响应路由） |
 | 🖼️ **图片静态资源直出** | `http://<服务器IP>:8080/imgs/...` | Nginx 直出，无业务开销 |
 | 📖 **API 在线接口文档** | `http://<服务器IP>:8080/doc.html` | Knife4j 调试接口文档 |
-| 📊 **Kibana 控制台** | `http://<服务器IP>:5601` | ES 数据可视化看板 |
+| 📊 **Kibana 控制台** | `http://<服务器IP>:5601` | ES 数据可视化看板（账号 `elastic`，密码为 `.env` 的 `PASSWORD`） |
 
 ---
 
@@ -452,7 +454,7 @@ docker compose up -d sp-mysql sp-redis sp-es sp-mongodb sp-kibana sp-nginx-dev
     ```
 
 ### Q11: 修改 `.env` 中的 `PASSWORD` 后，`sp-mysql` 一直 unhealthy，`sp-app` 起不来？
-* **原因**：`PASSWORD` 是 MySQL / Redis / JWT 三者共用的密码。MySQL root 密码仅在**首次初始化**（`sp-mysql-data` 数据卷为空）时写入，之后修改 `.env` 并不会同步到已有数据卷：MySQL 健康检查使用新密码连接失败 → `sp-mysql` 永远无法达到 `healthy` → `sp-app` 因 `depends_on: service_healthy` 条件不满足而不会启动。
+* **原因**：`PASSWORD` 是 MySQL / Redis / Elasticsearch / JWT 四者共用的密码。MySQL root 密码仅在**首次初始化**（`sp-mysql-data` 数据卷为空）时写入，之后修改 `.env` 并不会同步到已有数据卷：MySQL 健康检查使用新密码连接失败 → `sp-mysql` 永远无法达到 `healthy` → `sp-app` 因 `depends_on: service_healthy` 条件不满足而不会启动。
 * **解决（清空重建）**：⚠️ 会删除全部数据卷（MySQL / Redis / ES / MongoDB 数据全部清空）：
   ```bash
   docker compose down -v
@@ -465,7 +467,7 @@ docker compose up -d sp-mysql sp-redis sp-es sp-mongodb sp-kibana sp-nginx-dev
   # 然后在 .env 中更新 PASSWORD 后执行：
   docker compose up -d
   ```
-  注意：Redis 密码随 `.env` 重启即生效；JWT 密钥变更会使所有已登录 Token 失效（用户需重新登录）。
+  注意：Redis 密码随 `.env` 重启即生效；Elasticsearch 需同步重置 `elastic` 用户（`docker compose exec sp-es elasticsearch-reset-password -u elastic -i`，或直接删除 `sp-es-data` 卷重建——ES 索引由应用启动时从 MySQL 自动重建，不会真实丢失数据）；JWT 密钥变更会使所有已登录 Token 失效（用户需重新登录）。
 * **建议**：首次启动前就确定好最终密码；密码建议 16 位以上字母数字组合，勿含空格、`$`、引号等特殊字符（会被 compose 命令解析破坏）。
 
 ---

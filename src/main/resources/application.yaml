@@ -27,6 +27,8 @@ spring:
       uri: mongodb://127.0.0.1:27017/chat_memory_db
   elasticsearch:
     uris: http://127.0.0.1:9200
+    username: ${ELASTIC_USERNAME:elastic}
+    password: ${PASSWORD}
   servlet:
     multipart:
       enabled: true

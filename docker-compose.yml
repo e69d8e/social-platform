@@ -15,6 +15,8 @@ services:
       SPRING_DATA_REDIS_HOST: "sp-redis"
       SPRING_DATA_MONGODB_URI: "mongodb://sp-mongodb:27017/chat_memory_db"
       SPRING_ELASTICSEARCH_URIS: "http://sp-es:9200"
+      SPRING_ELASTICSEARCH_USERNAME: "elastic"
+      SPRING_ELASTICSEARCH_PASSWORD: "${PASSWORD}"
       # 业务环境变量
       PASSWORD: "${PASSWORD:?请先复制 .env.example 为 .env 并填写 PASSWORD}"
       OPENAI_API_KEY: "${OPENAI_API_KEY:-${DEEPSEEK_API_KEY}}"
@@ -25,6 +27,8 @@ services:
       CORS_ORIGIN: "${CORS_ORIGIN:-http://127.0.0.1:5173,http://127.0.0.1:8080,http://localhost:5173,http://localhost:8080}"
       # JVM 参数
       JAVA_OPTS: "-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -XX:InitialRAMPercentage=50.0 -Dfile.encoding=UTF-8 -Djava.security.egd=file:/dev/./urandom"
+    # 内存上限（JVM 按 75% 容器上限自适应堆大小）
+    mem_limit: 1g
     volumes:
       - ${HTML_PATH:-./html}/imgs:/usr/local/nginx/html/imgs  # 宿主机目录：与 sp-nginx 共享同一份图片
     depends_on:
@@ -66,6 +70,7 @@ services:
       - mysql-data:/var/lib/mysql
       # 初始化 SQL（首次启动时执行）
       - ./src/main/resources/social_platform.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    mem_limit: 768m
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${PASSWORD}"]
       interval: 10s
@@ -94,6 +99,7 @@ services:
       --maxmemory-policy allkeys-lru
     volumes:
       - redis-data:/data
+    mem_limit: 320m
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${PASSWORD}", "ping"]
       interval: 10s
@@ -119,12 +125,18 @@ services:
       - "127.0.0.1:9200:9200"
     environment:
       - discovery.type=single-node
-      - xpack.security.enabled=false
+      # 启用认证：elastic 用户密码复用 .env 的 PASSWORD（Basic 认证）；
+      # 单节点内网/回环场景不启用 HTTP 与 transport 层 TLS
+      - xpack.security.enabled=true
+      - xpack.security.http.ssl.enabled=false
+      - xpack.security.transport.ssl.enabled=false
+      - ELASTIC_PASSWORD=${PASSWORD}
       - ES_JAVA_OPTS=-Xms512m -Xmx512m
     volumes:
       - es-data:/usr/share/elasticsearch/data
+    mem_limit: 1g
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      test: ["CMD-SHELL", "curl -fs -u elastic:${PASSWORD} http://localhost:9200/_cluster/health || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 5
@@ -146,6 +158,7 @@ services:
     volumes:
       - mongo-data:/data/db
       - mongo-config:/data/configdb
+    mem_limit: 512m
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
       interval: 10s
@@ -173,6 +186,7 @@ services:
       - ${HTML_PATH:-./html}:/usr/share/nginx/html  # 宿主机 html 目录（包含前端 index.html/assets 与 imgs 图片）
     depends_on:
       - sp-app
+    mem_limit: 128m
     logging:
       driver: "json-file"
       options:
@@ -196,6 +210,7 @@ services:
       - "host.docker.internal:host-gateway"  # 允许容器访问宿主机网络
     profiles:
       - dev
+    mem_limit: 128m
     logging:
       driver: "json-file"
       options:
@@ -212,9 +227,14 @@ services:
       - "5601:5601"
     environment:
       ELASTICSEARCH_HOSTS: "http://sp-es:9200"
+      ELASTICSEARCH_USERNAME: "elastic"
+      ELASTICSEARCH_PASSWORD: "${PASSWORD}"
+      # 限制 Kibana 内置 Node.js 堆，防止超出容器内存上限被 OOM Kill
+      NODE_OPTIONS: "--max-old-space-size=768"
     depends_on:
       sp-es:
         condition: service_healthy
+    mem_limit: 1g
     logging:
       driver: "json-file"
       options:
