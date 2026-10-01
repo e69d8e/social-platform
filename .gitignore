@@ -32,6 +32,10 @@ build/
 ### VS Code ###
 .vscode/
 .claude/
+
+### ZCode 本地工作目录 ###
+.zcode/
+
 logs/
 
 ### Environment ###
