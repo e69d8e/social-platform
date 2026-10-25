@@ -39,7 +39,7 @@ FROM eclipse-temurin:21-jre-alpine
 LABEL maintainer="li"
 
 # 1. 设置时区为 Asia/Shanghai
-# 2. 安装 su-exec 用于启动时挂载卷权限自愈并安全降权
+# 2. 安装 su-exec 用于启动时以 root 完成目录授权后安全降权
 # 3. 创建低权限用户 spring
 RUN apk add --no-cache tzdata su-exec \
     && cp /usr/share/zoneinfo/Asia/Shanghai /etc/localtime \
