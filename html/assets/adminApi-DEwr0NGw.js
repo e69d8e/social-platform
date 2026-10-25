@@ -1,0 +1,1 @@
+import{a0 as s}from"./index-CTJSperS.js";const r=e=>s.put(`/admin/ban/${e}`),t=e=>s.put(`/admin/review/${e}`),n=e=>s.put(`/admin/user/${e}`),i=e=>s.get("/admin/ban",{params:e}),o=e=>s.get("/admin/ban/search",{params:e}),p=e=>s.get("/admin/dashboard",{params:e});export{t as a,r as b,o as c,p as d,i as g,n as s};

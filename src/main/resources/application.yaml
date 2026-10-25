@@ -59,7 +59,6 @@ langchain4j:
 social-platform:
   system-constants:
     user-nickname-prefix: "u_"
-    image-upload-dir: "${IMAGE_PATH:${HTML_PATH:./html}/imgs}"
     base-url: "${IMG_BASE_URL:${IMAGE_BASE_URL:http://127.0.0.1:8080/imgs}}"
     default-page-size: 12
     max-page-size: 1
@@ -70,6 +69,15 @@ social-platform:
     content-max-length: 12000
     nickname-max-length: 16
     bio-max-length: 2000
+  # MinIO 对象存储（图片上传/删除的后端存储）
+  minio:
+    endpoint: "${MINIO_ENDPOINT:http://127.0.0.1:9000}"
+    access-key: "${MINIO_ACCESS_KEY:${MINIO_ROOT_USER:minioadmin}}"
+    secret-key: "${MINIO_SECRET_KEY:${MINIO_ROOT_PASSWORD:${PASSWORD}}}"
+    bucket: "${MINIO_BUCKET:social-platform}"
+    # 文件自动清理：孤儿对象 + 废弃草稿记录，宽限期内的新文件不会被清理
+    cleanup-enabled: "${MINIO_CLEANUP_ENABLED:true}"
+    cleanup-grace-hours: "${MINIO_CLEANUP_GRACE_HOURS:24}"
 
 jwt:
   secret: ${PASSWORD}

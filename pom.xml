@@ -162,6 +162,12 @@
             <artifactId>jsoup</artifactId>
             <version>1.18.3</version> <!-- 建议使用最新稳定版 -->
         </dependency>
+        <!-- MinIO 对象存储 SDK：图片上传/删除改走 MinIO -->
+        <dependency>
+            <groupId>io.minio</groupId>
+            <artifactId>minio</artifactId>
+            <version>8.5.17</version>
+        </dependency>
         <!-- Spring Boot Starter Data MongoDB -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

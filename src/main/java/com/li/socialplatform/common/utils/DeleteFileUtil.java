@@ -1,7 +1,6 @@
 package com.li.socialplatform.common.utils;
 
-import cn.hutool.core.io.FileUtil;
-import com.li.socialplatform.common.properties.SystemConstants;
+import com.li.socialplatform.server.service.FileStorageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -16,33 +15,22 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class DeleteFileUtil {
 
-    private final SystemConstants systemConstants;
+    private final FileStorageService fileStorageService;
 
+    /**
+     * 根据文件相对 URL（形如 /a/b/xxx.jpg）删除 MinIO 存储对象。
+     * 删除失败仅记录日志，不中断业务流程（孤儿对象可由存储侧生命周期策略兜底）。
+     */
     public void deleteFile(String url) {
         if (url == null || !url.startsWith("/") || url.contains("..")) {
             return;
         }
 
-        // 去掉开头的 /，防止 new File(parent, "/absolute") 忽略 parent 目录
-        String relativePath = url.startsWith("/") ? url.substring(1) : url;
-        java.io.File file = new java.io.File(systemConstants.imageUploadDir, relativePath);
-        if (file.isDirectory()) {
-            return;
-        }
-
-        // 验证最终路径确实在允许的目录内
+        String objectKey = url.substring(1);
         try {
-            String canonicalPath = file.getCanonicalPath();
-            String canonicalBase = new java.io.File(systemConstants.imageUploadDir).getCanonicalPath();
-            if (!canonicalPath.startsWith(canonicalBase + java.io.File.separator)) {
-                log.warn("路径遍历攻击被拦截: {}", url);
-                return;
-            }
+            fileStorageService.delete(objectKey);
         } catch (Exception e) {
-            log.error("路径解析失败: {}", url, e);
-            return;
+            log.error("删除存储对象失败：{}", objectKey, e);
         }
-
-        FileUtil.del(file);
     }
 }

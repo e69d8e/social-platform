@@ -18,8 +18,9 @@
 | **分布式缓存** | Redis | 6.0.16 | 点赞/关注缓存、用户签到位图、滑动窗口限流、游标分页 |
 | **全文搜索引擎** | Elasticsearch + IK 分词 | 9.2.0 | 帖子与用户全文检索、中文高亮分词 |
 | **文档数据库** | MongoDB | 8.0.16 | LangChain4j AI 助手多轮对话记忆持久化 |
+| **对象存储** | MinIO | RELEASE.2025-10-15 | 用户图片存储桶（头像/帖子封面），公共读经 Nginx 代理直出 |
 | **AI 大模型** | LangChain4j + DeepSeek | 1.3.0-beta9 | DeepSeek-V4-Flash 模型，SSE 流式对话与标题生成 |
-| **网关与反向代理** | Nginx | 1.30 (Alpine) | SPA 前端路由、静态图片高速直出、WebSocket 代理 |
+| **网关与反向代理** | Nginx | 1.30 (Alpine) | SPA 前端路由、MinIO 图片代理直出、WebSocket 代理 |
 | **接口文档** | Knife4j (OpenAPI 3) | 4.6.0 | 在线接口文档与调试控制台 |
 | **实时通信** | STOMP over WebSocket | — | 点对点私信推送与未读计数 |
 
@@ -34,7 +35,7 @@
 - **私信聊天**：STOMP WebSocket 实时点对点消息通信、会话列表维护、未读数统计。
 - **AI 助手**：集成 DeepSeek 智能模型，支持流式打字机输出（SSE），对话上下文自动持久化至 MongoDB。
 - **内容安全与管理**：管理员后台、用户封禁、审核员帖子下架与违规评论删除。
-- **文件与图床**：图片上传（最大 10MB，支持 jpg/png/gif/webp）、宽高比合法性校验、SHA-256 自动去重、两级 16 进制目录分片存储。
+- **文件与图床**：图片上传（最大 10MB，支持 jpg/png/gif/webp）、宽高比合法性校验、前端 SHA-256 预检**经典秒传**（命中零文件传输）与服务端哈希物理去重、MinIO 对象存储（两级 16 进制分片对象名）、定时对账**自动清理**孤儿对象与废弃草稿。
 - **分布式限流**：自定义 `@RateLimit` 注解 + AOP 切面，基于 Redis 滑动窗口防御刷量。
 
 ---
@@ -73,16 +74,19 @@ flowchart TB
             Redis[("Redis 6.0<br/>分布式缓存 & 位图 :6379")]
             ES[("Elasticsearch 9.2<br/>全文检索 + IK 分词 :9200")]
             Mongo[("MongoDB 8.0<br/>AI 会话记忆库 :27017")]
+            MinIO[("MinIO<br/>图片对象存储桶 :9000")]
         end
     end
 
     Client -->|"HTTPS / WS"| Nginx
     Nginx -->|"REST 代理 (/api)"| App
     Nginx -->|"WS 升级连接 (/ws)"| WS
+    Nginx -->|"图片代理直出 (/imgs)"| MinIO
     App -->|"安全过滤与鉴权"| Security
     Security -->|"黑名单 / 滑动窗口"| Redis
     App -->|"SQL 读写 (Lambda CRUD)"| MySQL
     App -->|"IK 中文检索 / 高亮"| ES
+    App -->|"图片上传 / 秒传预检 / 定时清理"| MinIO
     App -->|"对话调度"| AIAgent
     AIAgent -.->|"SSE 流式推理"| DeepSeek
     AIAgent -->|"多轮上下文持久化"| Mongo
@@ -100,7 +104,7 @@ flowchart TB
 
 3. **网关分发与实时通信 (Gateway & Realtime Messaging)**
    - **通信链路**：`Web 客户端` $\leftrightarrow$ `Nginx 网关` $\leftrightarrow$ `WebSocket STOMP Broker` $\rightarrow$ `社交核心服务`。
-   - **分发职责**：Nginx 挂载宿主机静态目录直出 Vue 3 前端产物与用户上传图片（`/imgs`），实现零业务容器开销；支持 STOMP over WebSocket 协议，Nginx 维持 HTTP `Upgrade` 长连接，实现毫秒级点对点私信推送与未读数实时同步；图片上传经 SHA-256 哈希计算实现物理去重与两级 16 进制目录分片存储。
+   - **分发职责**：Nginx 挂载宿主机静态目录直出 Vue 3 前端产物，并将图片请求（`/imgs`）代理至 MinIO 对象存储直出，实现零业务容器开销；支持 STOMP over WebSocket 协议，Nginx 维持 HTTP `Upgrade` 长连接，实现毫秒级点对点私信推送与未读数实时同步；图片上传支持前端 SHA-256 预检的经典秒传（命中零传输）与服务端哈希去重，两级 16 进制分片对象名存入 MinIO 桶，并有定时对账任务自动清理孤儿对象与废弃草稿。
 
 4. **智能 AI 与全文检索 (AI & Search Infrastructure)**
    - **数据链路**：`社交核心服务` $\rightarrow$ `AI 智能助理 (LangChain4j)` $\leftrightarrow$ `DeepSeek API` / `MongoDB 8.0` / `Elasticsearch 9.2`。
@@ -146,9 +150,9 @@ flowchart TB
   - `5601`：（可选）Kibana 控制台
   - `8081`：（可选）Spring Boot 直连端口
 
-> ℹ️ **安全说明**：MySQL(`3306`) / Redis(`6379`) / Elasticsearch(`9200`) / MongoDB(`27017`) 等数据端口已在 `docker-compose.yml` 中绑定 `127.0.0.1` 回环地址，仅宿主机本地（含本地 IDEA 开发模式）可访问，**无需也无法在安全组放行**；如需远程管理请使用 SSH 隧道（例如 `ssh -L 3306:127.0.0.1:3306 user@server`）。Elasticsearch 已启用认证（用户 `elastic`，密码为 `.env` 中的 `PASSWORD`），Spring Boot 客户端、Kibana 登录与健康检查均已接入该凭证；由于 Kibana(5601) 自身无独立认证体系，若保持 `5601` 对外，请在安全组中仅对可信 IP 放行。
+> ℹ️ **安全说明**：MySQL(`3306`) / Redis(`6379`) / Elasticsearch(`9200`) / MongoDB(`27017`) / MinIO(`9000` API 与 `9001` 控制台) 等数据端口已在 `docker-compose.yml` 中绑定 `127.0.0.1` 回环地址，仅宿主机本地（含本地 IDEA 开发模式）可访问，**无需也无法在安全组放行**；如需远程管理请使用 SSH 隧道（例如 `ssh -L 3306:127.0.0.1:3306 user@server`）。Elasticsearch 已启用认证（用户 `elastic`，密码为 `.env` 中的 `PASSWORD`），Spring Boot 客户端、Kibana 登录与健康检查均已接入该凭证；MinIO 已启用认证（用户 `minioadmin`，密码为 `.env` 的 `MINIO_ROOT_PASSWORD`，默认复用 `PASSWORD`），图片桶设为公共读、仅经 Nginx `/imgs` 代理对外直出；由于 Kibana(5601) 自身无独立认证体系，若保持 `5601` 对外，请在安全组中仅对可信 IP 放行。
 >
-> ℹ️ **内存说明**：已为各容器配置 `mem_limit` 内存上限（总上限约 5GB：sp-app 1g、sp-es 1g、sp-kibana 1g、sp-mysql 768m、sp-mongodb 512m、sp-redis 320m、sp-nginx 128m），避免单个容器拖垮宿主机。
+> ℹ️ **内存说明**：已为各容器配置 `mem_limit` 内存上限（总上限约 5.6GB：sp-app 1g、sp-es 1g、sp-kibana 1g、sp-mysql 768m、sp-minio 512m、sp-mongodb 512m、sp-redis 320m、sp-nginx 128m），避免单个容器拖垮宿主机。
 
 ---
 
@@ -194,9 +198,11 @@ OPENAI_BASE_URL=https://api.deepseek.com
 # 提示：接口格式遵循 OpenAI Chat Completions 标准协议（请求/响应/消息体格式详见下文 FAQ Q10）
 MODEL_NAME=deepseek-v4-flash
 
-# 前端静态资源与图片根目录（包含 index.html、assets 以及 imgs 图片子目录）
-# 本地 IDEA 开发与全容器部署默认使用相对路径 ./html；配置 HTML_PATH 后，图片存储目录自动为 ${HTML_PATH}/imgs
+# 前端静态资源根目录（包含 index.html、assets；图片已改存 MinIO 对象存储，不再落盘本目录）
 HTML_PATH=./html
+
+# MinIO 对象存储（图片上传/删除的存储后端）；密码复用上方 PASSWORD，本地保持默认即可
+MINIO_ROOT_USER=minioadmin
 
 # ⚠️ 远程/局域网部署必填：图片访问地址（本地单机测试保持 127.0.0.1 即可；跨机/服务器部署请填真实服务器 IP）
 IMG_BASE_URL=http://127.0.0.1:8080/imgs
@@ -213,7 +219,7 @@ CORS_ORIGIN=http://127.0.0.1:5173,http://127.0.0.1:8080,http://localhost:5173,ht
 html/
 ├── index.html           # 前端 SPA 页面入口（已内置打包产物）
 ├── assets/              # 前端 JS/CSS 静态资源库（已内置打包产物）
-└── imgs/                # 用户上传图片落盘存储目录
+└── imgs/                # 历史存量图片目录（首次启动时由 sp-minio-init 自动迁移进 MinIO，此后仅作备份）
 ```
 
 #### 步骤 4：一键构建并后台启动所有服务
@@ -238,7 +244,7 @@ html/
 ```bash
 docker compose ps
 ```
-所有容器状态显示为 `Up` 或 `healthy` 即表示全套服务就绪（`sp-es-init` 为一次性 ES 认证初始化任务，显示 `Exited (0)` 属正常）。
+所有容器状态显示为 `Up` 或 `healthy` 即表示全套服务就绪（`sp-es-init` 与 `sp-minio-init` 为一次性初始化任务，显示 `Exited (0)` 属正常；`sp-minio-init` 会将 `html/imgs` 下的存量图片自动迁移至 MinIO 桶，幂等可重复执行）。
 
 ---
 
@@ -247,7 +253,7 @@ docker compose ps
 | 模块 | 访问地址 | 说明 |
 |---|---|---|
 | 🌐 **平台前端主页** | `http://<服务器IP>:8080` | 前端 SPA 页面（自动响应路由） |
-| 🖼️ **图片静态资源直出** | `http://<服务器IP>:8080/imgs/...` | Nginx 直出，无业务开销 |
+| 🖼️ **图片静态资源直出** | `http://<服务器IP>:8080/imgs/...` | Nginx 代理 MinIO 对象存储直出，无业务开销 |
 | 📖 **API 在线接口文档** | `http://<服务器IP>:8080/doc.html` | Knife4j 调试接口文档 |
 | 📊 **Kibana 控制台** | `http://<服务器IP>:5601` | ES 数据可视化看板（账号 `elastic`，密码为 `.env` 的 `PASSWORD`） |
 
@@ -284,7 +290,7 @@ docker compose ps
 cp .env.example .env
 
 # 2. 启动基础设施中间件 + 本地开发版 Nginx（反向代理至宿主机 IDEA）
-docker compose up -d sp-mysql sp-redis sp-es sp-mongodb sp-kibana sp-nginx-dev
+docker compose up -d sp-mysql sp-redis sp-es sp-mongodb sp-minio sp-kibana sp-nginx-dev
 
 # 3. 宿主机在 IDEA 中直接点击 Debug/Run 运行 SocialPlatformApplication，或命令行运行：
 # Linux / macOS:
@@ -295,9 +301,9 @@ docker compose up -d sp-mysql sp-redis sp-es sp-mongodb sp-kibana sp-nginx-dev
 
 启动完成后，直接在浏览器访问 **`http://localhost:8080`** 即可进行全功能联调与断点调试！
 
-> 💡 **本地调试与图片落盘机制**：
-> - 本地开发时 `.env` 中的 `HTML_PATH=./html` 会指示 IDEA 运行的 Spring Boot 直接将图片存入当前工程下的 `./html/imgs` 目录（无需再单独配置 `IMAGE_PATH`）。
-> - `sp-nginx-dev` 容器挂载了宿主机的 `${HTML_PATH:-./html}` 目录，上传完成后可通过 `http://localhost:8080/imgs/...` 即时直出查看，无需拷贝任何文件。
+> 💡 **本地调试与图片存储机制**：
+> - 图片已改存 MinIO 对象存储：本地开发时 IDEA 运行的 Spring Boot 通过默认地址 `http://127.0.0.1:9000`（即 `sp-minio` 容器映射的回环端口）上传/删除图片，无需任何额外配置。
+> - `sp-nginx-dev` 容器将 `/imgs` 代理至宿主机 MinIO，上传完成后即可通过 `http://localhost:8080/imgs/...` 即时直出查看；MinIO Web 控制台（仅本机可访问）：`http://127.0.0.1:9001`。
 
 > 💡 **模式切换提示**：
 > - 从全容器模式切到本地 IDEA 模式：`docker compose stop sp-app sp-nginx && docker compose up -d sp-nginx-dev`
@@ -485,10 +491,10 @@ social-platform/
 │   ├── nginx.conf           # 主配置文件（Gzip/日志/超时）
 │   ├── conf.d/default.conf  # 容器生产模式路由网关（反代至 sp-app:8081 容器）
 │   └── conf.dev.d/default.conf # 本地开发模式路由网关（反代至 host.docker.internal:8081 宿主机 IDEA）
-├── html/                    # 宿主机挂载目录（前端静态文件与图片落盘）
+├── html/                    # 宿主机挂载目录（前端静态文件）
 │   ├── index.html           # 前端 SPA 首页（已内置打包产物，开箱即用）
 │   ├── assets/              # 前端 JS/CSS 静态资源库（已内置打包产物）
-│   └── imgs/                # 图片落盘存储目录（头像 avatar/ 与 帖子封面）
+│   └── imgs/                # 历史存量图片目录（首次启动由 sp-minio-init 迁移至 MinIO）
 ├── elasticsearch/           # Elasticsearch Docker 构建目录（集成 IK 中文分词）
 ├── docs/                    # 详细设计与架构说明文档
 │   ├── architecture.html        # 高层运行时架构交互式图表（支持深浅色主题、蓝图/信号流模式、路径探索与动效导出）

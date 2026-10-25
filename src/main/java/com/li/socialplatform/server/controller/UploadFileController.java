@@ -1,10 +1,9 @@
 package com.li.socialplatform.server.controller;
 
-import cn.hutool.core.io.FileUtil;
 import cn.hutool.core.util.StrUtil;
-import jakarta.annotation.PostConstruct;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.li.socialplatform.common.properties.SystemConstants;
+import com.li.socialplatform.common.utils.DeleteFileUtil;
 import com.li.socialplatform.common.utils.UserIdUtil;
 import com.li.socialplatform.pojo.entity.Result;
 import com.li.socialplatform.server.mapper.FileMapper;
@@ -13,6 +12,7 @@ import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import com.li.socialplatform.server.mapper.PostMapper;
 import com.li.socialplatform.pojo.entity.Post;
+import com.li.socialplatform.server.service.FileStorageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
@@ -23,7 +23,6 @@ import javax.imageio.ImageReader;
 import javax.imageio.stream.ImageInputStream;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
-import java.io.File;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.*;
@@ -35,7 +34,7 @@ import java.util.*;
 @Slf4j
 @RestController
 @RequestMapping("/upload")
-@Tag(name = "文件上传", description = "图片上传与删除，支持帖子图片和头像")
+@Tag(name = "文件上传", description = "图片上传与删除（MinIO 对象存储），支持帖子图片和头像")
 @RequiredArgsConstructor
 public class UploadFileController {
     private final SystemConstants systemConstants;
@@ -46,33 +45,15 @@ public class UploadFileController {
 
     private final UserIdUtil userIdUtil;
 
+    private final FileStorageService fileStorageService;
+
+    private final DeleteFileUtil deleteFileUtil;
+
     private static final Set<String> ALLOWED_IMAGE_TYPES = new HashSet<>(Arrays.asList(
             "jpg", "jpeg", "png", "gif", "bmp", "webp"
     ));
 
     private static final long MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-
-    /**
-     * 启动时校验图片上传目录，尽早发现权限/配置问题。
-     * 校验失败仅记录错误日志，不阻塞应用启动；上传时会给出明确错误提示。
-     */
-    @PostConstruct
-    public void initUploadDir() {
-        File dir = new File(systemConstants.imageUploadDir).getAbsoluteFile();
-        if (!dir.exists() && !dir.mkdirs()) {
-            log.error("图片上传目录创建失败：{}，请检查 HTML_PATH / IMAGE_PATH 配置及目录权限", dir.getAbsolutePath());
-            return;
-        }
-        if (!dir.isDirectory()) {
-            log.error("图片上传目录不是一个目录：{}，请检查 HTML_PATH / IMAGE_PATH 配置", dir.getAbsolutePath());
-            return;
-        }
-        if (!dir.canWrite()) {
-            log.error("图片上传目录不可写：{}，请为应用运行用户授予写权限", dir.getAbsolutePath());
-            return;
-        }
-        log.info("图片上传目录校验通过：{}", dir.getAbsolutePath());
-    }
 
     /** 头像宽高比 1:1 */
     private static final double AVATAR_ASPECT_RATIO = 1.0;
@@ -93,6 +74,37 @@ public class UploadFileController {
     public Result uploadAvatarImage(
             @Parameter(description = "头像文件") @RequestParam("file") MultipartFile image) {
         return upload(image, null, AVATAR_ASPECT_RATIO, "1:1");
+    }
+
+    @GetMapping("/check")
+    @Operation(summary = "秒传预检", description = "按文件 SHA-256 查询服务端是否已存在相同内容；命中则复用已有 URL 并补登一条复用记录，客户端可直接跳过文件传输")
+    public Result checkFileHash(
+            @Parameter(description = "文件 SHA-256（64 位十六进制小写）") @RequestParam("hash") String hash,
+            @Parameter(description = "帖子ID（帖子图片必传，头像不传）") @RequestParam(value = "postId", required = false) Long postId) {
+        if (hash == null || !hash.matches("[0-9a-fA-F]{64}")) {
+            return Result.error("无效的文件哈希");
+        }
+        hash = hash.toLowerCase();
+
+        // 桶内已有同哈希内容（同哈希可能对应多条复用记录，LIMIT 1 取任意一条）
+        com.li.socialplatform.pojo.entity.File file = fileMapper.selectOne(
+                new LambdaQueryWrapper<com.li.socialplatform.pojo.entity.File>()
+                        .eq(com.li.socialplatform.pojo.entity.File::getHash, hash)
+                        .last("LIMIT 1"));
+        if (file == null) {
+            return Result.ok(null); // 未命中：客户端需正常上传文件内容
+        }
+
+        // 命中：为当前用户/帖子补登一条复用记录（同组合已存在则幂等跳过）
+        Long userId = userIdUtil.getUserId();
+        Long count = fileMapper.selectCount(new LambdaQueryWrapper<com.li.socialplatform.pojo.entity.File>()
+                .eq(com.li.socialplatform.pojo.entity.File::getHash, hash)
+                .eq(postId != null, com.li.socialplatform.pojo.entity.File::getPostId, postId)
+                .eq(userId != null, com.li.socialplatform.pojo.entity.File::getUserId, userId));
+        if (count <= 0) {
+            fileMapper.insert(new com.li.socialplatform.pojo.entity.File(null, postId, userId, file.getUrl(), hash));
+        }
+        return Result.ok(systemConstants.baseUrl + file.getUrl());
     }
 
     private Result upload(MultipartFile image, Long postId, Double targetRatio, String ratioLabel) {
@@ -135,18 +147,20 @@ public class UploadFileController {
             String sha256Hash = calculateSHA256(bytes);
             // 获取当前登录用户id
             Long userId = userIdUtil.getUserId();
-            // 判断文件是否已存在
+            // 判断文件是否已存在（同哈希可能被多个帖子/用户复用，LIMIT 1 取任意一条即可）
             com.li.socialplatform.pojo.entity.File existingFile = fileMapper.selectOne(
                     new LambdaQueryWrapper<com.li.socialplatform.pojo.entity.File>()
                             .eq(com.li.socialplatform.pojo.entity.File::getHash, sha256Hash)
                             .eq(postId != null, com.li.socialplatform.pojo.entity.File::getPostId, postId)
-                            .eq(userId != null, com.li.socialplatform.pojo.entity.File::getUserId, userId));
+                            .eq(userId != null, com.li.socialplatform.pojo.entity.File::getUserId, userId)
+                            .last("LIMIT 1"));
             if (existingFile != null) {
                 return Result.ok(systemConstants.baseUrl + existingFile.getUrl());
             }
             com.li.socialplatform.pojo.entity.File file = fileMapper.selectOne(
                     new LambdaQueryWrapper<com.li.socialplatform.pojo.entity.File>()
-                            .eq(com.li.socialplatform.pojo.entity.File::getHash, sha256Hash));
+                            .eq(com.li.socialplatform.pojo.entity.File::getHash, sha256Hash)
+                            .last("LIMIT 1"));
             if (file != null) {
                 // 插入数据库
                 file.setPostId(postId);
@@ -159,17 +173,8 @@ public class UploadFileController {
 
             String fileUrl = createNewFileName(originalFilename, sha256Hash);
 
-            File destFile = new File(systemConstants.imageUploadDir, fileUrl).getAbsoluteFile();
-
-            // 确保存储子目录存在（并发时 mkdirs 可能返回 false，需重新确认）
-            File parentDir = destFile.getParentFile();
-            if (!parentDir.isDirectory() && !parentDir.mkdirs() && !parentDir.isDirectory()) {
-                log.error("创建图片存储目录失败：{}，当前运行用户无写权限", parentDir.getAbsolutePath());
-                return Result.error("图片保存失败：服务器上传目录无写权限，请联系管理员检查 HTML_PATH / IMAGE_PATH 目录权限");
-            }
-
-            log.info("保存文件到: {}", destFile.getAbsolutePath());
-            image.transferTo(destFile);
+            // 上传到 MinIO，对象名 = fileUrl 去掉开头的 /
+            fileStorageService.upload(fileUrl.substring(1), bytes, image.getContentType());
 
             int success = fileMapper.insert(
                     new com.li.socialplatform.pojo.entity.File(null, postId, userId, fileUrl, sha256Hash));
@@ -177,7 +182,7 @@ public class UploadFileController {
                 return Result.error("文件上传失败");
             }
 
-            log.debug("文件上传成功，SHA256: {}, 文件名: {}", sha256Hash, fileUrl);
+            log.debug("文件上传成功，SHA256: {}, 对象名: {}", sha256Hash, fileUrl);
             return Result.ok(systemConstants.baseUrl + fileUrl);
         } catch (Exception e) {
             log.error("文件上传失败", e);
@@ -208,46 +213,35 @@ public class UploadFileController {
             return Result.error("非法的文件路径");
         }
 
-        com.li.socialplatform.pojo.entity.File fileEntity = fileMapper.selectOne(
+        // 同一 url 可能因哈希复用存在多条记录，仅处理当前用户名下的记录
+        List<com.li.socialplatform.pojo.entity.File> fileRows = fileMapper.selectList(
                 new LambdaQueryWrapper<com.li.socialplatform.pojo.entity.File>()
                         .eq(com.li.socialplatform.pojo.entity.File::getUrl, url));
+        Long currentUserId = userIdUtil.getUserId();
+        boolean owned = fileRows.stream().anyMatch(f -> Objects.equals(f.getUserId(), currentUserId));
 
-        if (fileEntity == null) {
+        if (fileRows.isEmpty()) {
             return Result.ok();
         }
-
-        if (!Objects.equals(fileEntity.getUserId(), userIdUtil.getUserId())) {
+        if (!owned) {
             return Result.error("没有权限删除该文件");
         }
 
-        String relativePath = url.startsWith("/") ? url.substring(1) : url;
-        File file = new File(systemConstants.imageUploadDir, relativePath);
-        if (file.isDirectory()) {
-            return Result.ok();
+        com.li.socialplatform.pojo.entity.File fileEntity = fileRows.get(0);
+        fileMapper.delete(new LambdaQueryWrapper<com.li.socialplatform.pojo.entity.File>()
+                .eq(com.li.socialplatform.pojo.entity.File::getUrl, url)
+                .eq(com.li.socialplatform.pojo.entity.File::getUserId, userIdUtil.getUserId()));
+        // 同哈希对象可能被其他记录复用（SHA-256 物理去重），仅当无其他引用时才删除存储对象
+        Long count = fileMapper.selectCount(new LambdaQueryWrapper<com.li.socialplatform.pojo.entity.File>()
+                .eq(com.li.socialplatform.pojo.entity.File::getHash, fileEntity.getHash()));
+        if (count <= 0) {
+            deleteFileUtil.deleteFile(url);
         }
-
-        // 验证最终路径确实在允许的目录内
-        try {
-            String canonicalPath = file.getCanonicalPath();
-            String canonicalBase = new File(systemConstants.imageUploadDir).getCanonicalPath();
-            if (!canonicalPath.startsWith(canonicalBase + File.separator)) {
-                return Result.error("非法的文件路径");
-            }
-        } catch (Exception e) {
-            return Result.error("路径解析失败");
-        }
-
-        boolean deleted = FileUtil.del(file);
-        if (deleted) {
-            fileMapper.deleteById(fileEntity.getId());
-            return Result.ok();
-        } else {
-            return Result.error("文件删除失败");
-        }
+        return Result.ok();
     }
 
     @DeleteMapping("/delete/{postId}")
-    @Operation(summary = "删除帖子所有文件", description = "删除指定帖子关联的所有图片，并清理无引用的物理文件")
+    @Operation(summary = "删除帖子所有文件", description = "删除指定帖子关联的所有图片，并清理无引用的物理对象")
     public Result deleteFile(
             @Parameter(description = "帖子ID") @PathVariable Long postId) {
         if (postId == null) {
@@ -281,13 +275,10 @@ public class UploadFileController {
                 .eq(com.li.socialplatform.pojo.entity.File::getPostId, postId));
 
         for (com.li.socialplatform.pojo.entity.File file : currentFiles) {
-            String hash = file.getHash();
             Long count = fileMapper.selectCount(new LambdaQueryWrapper<com.li.socialplatform.pojo.entity.File>()
-                    .eq(com.li.socialplatform.pojo.entity.File::getHash, hash));
+                    .eq(com.li.socialplatform.pojo.entity.File::getHash, file.getHash()));
             if (count <= 0) {
-                String relativePath = file.getUrl().startsWith("/") ? file.getUrl().substring(1) : file.getUrl();
-                File fileToDelete = new File(systemConstants.imageUploadDir, relativePath);
-                FileUtil.del(fileToDelete);
+                deleteFileUtil.deleteFile(file.getUrl());
             }
         }
         return Result.ok();

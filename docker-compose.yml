@@ -22,15 +22,19 @@ services:
       OPENAI_API_KEY: "${OPENAI_API_KEY:-${DEEPSEEK_API_KEY}}"
       OPENAI_BASE_URL: "${OPENAI_BASE_URL:-${DEEPSEEK_BASE_URL:-https://api.deepseek.com}}"
       MODEL_NAME: "${MODEL_NAME:-${DEEPSEEK_MODEL_NAME:-deepseek-v4-flash}}"
-      IMAGE_PATH: "/usr/local/nginx/html/imgs"
       IMG_BASE_URL: "${IMG_BASE_URL:-http://127.0.0.1:8080/imgs}"
+      # MinIO 对象存储（容器间通过服务名通信）
+      MINIO_ENDPOINT: "http://sp-minio:9000"
+      MINIO_ACCESS_KEY: "${MINIO_ROOT_USER:-minioadmin}"
+      MINIO_SECRET_KEY: "${MINIO_ROOT_PASSWORD:-${PASSWORD}}"
+      MINIO_BUCKET: "${MINIO_BUCKET:-social-platform}"
+      # 文件自动清理宽限期（小时），0 表示立即清理（仅测试用）
+      MINIO_CLEANUP_GRACE_HOURS: "${MINIO_CLEANUP_GRACE_HOURS:-24}"
       CORS_ORIGIN: "${CORS_ORIGIN:-http://127.0.0.1:5173,http://127.0.0.1:8080,http://localhost:5173,http://localhost:8080}"
       # JVM 参数
       JAVA_OPTS: "-XX:+UseContainerSupport -XX:MaxRAMPercentage=75.0 -XX:InitialRAMPercentage=50.0 -Dfile.encoding=UTF-8 -Djava.security.egd=file:/dev/./urandom"
     # 内存上限（JVM 按 75% 容器上限自适应堆大小）
     mem_limit: 1g
-    volumes:
-      - ${HTML_PATH:-./html}/imgs:/usr/local/nginx/html/imgs  # 宿主机目录：与 sp-nginx 共享同一份图片
     depends_on:
       sp-mysql:
         condition: service_healthy
@@ -39,6 +43,8 @@ services:
       sp-es:
         condition: service_healthy
       sp-mongodb:
+        condition: service_healthy
+      sp-minio:
         condition: service_healthy
     logging:
       driver: "json-file"
@@ -196,6 +202,89 @@ services:
       - sp
     restart: unless-stopped
 
+  # MinIO 数据卷权限一次性初始化任务（幂等）：
+  # alpine/minio 镜像以非 root 的 minio 用户（uid 100/gid 101）运行，
+  # 而 Docker 新建命名卷属主为 root，需先修正属主，否则 MinIO 启动报 file access denied
+  sp-minio-volume-init:
+    image: alpine/minio:RELEASE.2025-10-15T17-29-55Z
+    container_name: sp-minio-volume-init
+    user: "0:0"  # 镜像默认 USER 为 minio(100)，chown 需显式以 root 运行
+    entrypoint: ["/bin/sh", "-c", "chown -R 100:101 /data && echo 'MinIO 数据卷属主初始化完成'"]
+    volumes:
+      - minio-data:/data
+    mem_limit: 128m
+    restart: "no"
+    networks:
+      - sp
+
+  # MinIO 对象存储：用户上传图片（头像、帖子封面）统一存入 social-platform 桶
+  # 说明：MinIO 官方社区镜像已从 Docker Hub 下架，改用同版本三方镜像 alpine/minio
+  # （RELEASE.2025-10-15T17-29-55Z 为社区版最后发布版本）
+  sp-minio:
+    image: alpine/minio:RELEASE.2025-10-15T17-29-55Z
+    container_name: sp-minio
+    command: server /data --console-address ":9001"
+    ports:
+      - "127.0.0.1:9000:9000"  # S3 API（后端上传 + Nginx 代理直出均走此端口）
+      - "127.0.0.1:9001:9001"  # Web 管理控制台
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:-minioadmin}"
+      # MinIO 要求密码至少 8 位：PASSWORD 不足 8 位时需在 .env 单独设置 MINIO_ROOT_PASSWORD
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:-${PASSWORD}}"
+    volumes:
+      - minio-data:/data
+    depends_on:
+      sp-minio-volume-init:
+        condition: service_completed_successfully
+    mem_limit: 512m
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+    networks:
+      - sp
+    restart: unless-stopped
+
+  # MinIO 存量图片一次性迁移任务（幂等，可重复执行）：
+  # 用 rclone 将宿主机 html/imgs 下的历史图片（含 avatar/default.jpg 默认头像）拷入 MinIO 桶；
+  # 建桶与公共读策略由后端 MinioConfig 启动逻辑兜底，此处只负责数据迁移
+  sp-minio-init:
+    image: rclone/rclone:latest
+    container_name: sp-minio-init
+    depends_on:
+      sp-minio:
+        condition: service_healthy
+    environment:
+      # rclone 通过环境变量完成 MinIO S3 连接配置（remote 名为 sp）
+      RCLONE_CONFIG_SP_TYPE: s3
+      RCLONE_CONFIG_SP_PROVIDER: Minio
+      RCLONE_CONFIG_SP_ENDPOINT: "http://sp-minio:9000"
+      RCLONE_CONFIG_SP_ACCESS_KEY_ID: "${MINIO_ROOT_USER:-minioadmin}"
+      RCLONE_CONFIG_SP_SECRET_ACCESS_KEY: "${MINIO_ROOT_PASSWORD:-${PASSWORD}}"
+      MINIO_BUCKET: "${MINIO_BUCKET:-social-platform}"
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        echo "迁移存量图片到 MinIO 桶..."
+        rclone mkdir "sp:$$MINIO_BUCKET"
+        rclone copy /imgs "sp:$$MINIO_BUCKET" --transfers 4 --checkers 8 --exclude ".DS_Store"
+        rclone delete "sp:$$MINIO_BUCKET" --include ".DS_Store" || true
+        echo "存量图片迁移完成"
+    volumes:
+      - ${HTML_PATH:-./html}/imgs:/imgs:ro
+    mem_limit: 128m
+    restart: "no"
+    networks:
+      - sp
+
   # 生产 / 容器全量模式 Nginx（反向代理至 sp-app 容器）
   sp-nginx:
     image: nginx:stable-alpine
@@ -205,7 +294,7 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      - ${HTML_PATH:-./html}:/usr/share/nginx/html  # 宿主机 html 目录（包含前端 index.html/assets 与 imgs 图片）
+      - ${HTML_PATH:-./html}:/usr/share/nginx/html  # 宿主机 html 目录（前端 index.html/assets；图片已改由 MinIO 提供）
     depends_on:
       - sp-app
     mem_limit: 128m
@@ -227,7 +316,7 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/conf.dev.d:/etc/nginx/conf.d:ro
-      - ${HTML_PATH:-./html}:/usr/share/nginx/html  # 宿主机 html 目录（包含前端 index.html/assets 与 imgs 图片）
+      - ${HTML_PATH:-./html}:/usr/share/nginx/html  # 宿主机 html 目录（前端 index.html/assets；图片已改由 MinIO 提供）
     extra_hosts:
       - "host.docker.internal:host-gateway"  # 允许容器访问宿主机网络
     profiles:
@@ -285,6 +374,8 @@ volumes:
     name: sp-mongodb-data
   mongo-config:
     name: sp-mongo-config
+  minio-data:
+    name: sp-minio-data
 
 # ========== 网络 ==========
 networks:

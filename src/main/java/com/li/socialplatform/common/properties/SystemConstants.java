@@ -13,7 +13,6 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "social-platform.system-constants")
 public class SystemConstants {
     public String userNicknamePrefix;
-    public String imageUploadDir;
     public String baseUrl;
     public String defaultPageSize;
     public String maxPageSize;
