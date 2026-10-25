@@ -252,39 +252,6 @@ services:
       - sp
     restart: unless-stopped
 
-  # MinIO 存量图片一次性迁移任务（幂等，可重复执行）：
-  # 用 rclone 将宿主机 html/imgs 下的历史图片（含 avatar/default.jpg 默认头像）拷入 MinIO 桶；
-  # 建桶与公共读策略由后端 MinioConfig 启动逻辑兜底，此处只负责数据迁移
-  sp-minio-init:
-    image: rclone/rclone:latest
-    container_name: sp-minio-init
-    depends_on:
-      sp-minio:
-        condition: service_healthy
-    environment:
-      # rclone 通过环境变量完成 MinIO S3 连接配置（remote 名为 sp）
-      RCLONE_CONFIG_SP_TYPE: s3
-      RCLONE_CONFIG_SP_PROVIDER: Minio
-      RCLONE_CONFIG_SP_ENDPOINT: "http://sp-minio:9000"
-      RCLONE_CONFIG_SP_ACCESS_KEY_ID: "${MINIO_ROOT_USER:-minioadmin}"
-      RCLONE_CONFIG_SP_SECRET_ACCESS_KEY: "${MINIO_ROOT_PASSWORD:-${PASSWORD}}"
-      MINIO_BUCKET: "${MINIO_BUCKET:-social-platform}"
-    entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        echo "迁移存量图片到 MinIO 桶..."
-        rclone mkdir "sp:$$MINIO_BUCKET"
-        rclone copy /imgs "sp:$$MINIO_BUCKET" --transfers 4 --checkers 8 --exclude ".DS_Store"
-        rclone delete "sp:$$MINIO_BUCKET" --include ".DS_Store" || true
-        echo "存量图片迁移完成"
-    volumes:
-      - ${HTML_PATH:-./html}/imgs:/imgs:ro
-    mem_limit: 128m
-    restart: "no"
-    networks:
-      - sp
-
   # 生产 / 容器全量模式 Nginx（反向代理至 sp-app 容器）
   sp-nginx:
     image: nginx:stable-alpine
