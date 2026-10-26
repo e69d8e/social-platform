@@ -17,7 +17,7 @@
 | **关系型数据库** | MySQL | 8.0.46 | 业务核心数据存储（utf8mb4 字符集） |
 | **分布式缓存** | Redis | 6.0.16 | 点赞/关注缓存、用户签到位图、滑动窗口限流、游标分页 |
 | **全文搜索引擎** | Elasticsearch + IK 分词 | 9.2.0 | 帖子与用户全文检索、中文高亮分词 |
-| **文档数据库** | MongoDB | 8.0.16 | LangChain4j AI 助手多轮对话记忆持久化 |
+| **文档数据库** | MongoDB | 8.0.29 | LangChain4j AI 助手多轮对话记忆持久化 |
 | **对象存储** | MinIO | RELEASE.2025-10-15 | 用户图片存储桶（头像/帖子封面），公共读经 Nginx 代理直出 |
 | **AI 大模型** | LangChain4j + DeepSeek | 1.3.0-beta9 | DeepSeek-V4-Flash 模型，SSE 流式对话与标题生成 |
 | **网关与反向代理** | Nginx | 1.30 (Alpine) | SPA 前端路由、MinIO 图片代理直出、WebSocket 代理 |
@@ -317,7 +317,7 @@ docker compose up -d sp-mysql sp-redis sp-es sp-mongodb sp-minio sp-kibana sp-ng
 * **原因**：这是国内直连 Docker Hub 官方源网络波动、丢包或被限制引起的连接中断。
 * **解决**：
   1. 在 Docker Desktop 设置中的 **Docker Engine** 配置国内加速镜像源（见前置准备章节），或在 **Settings -> Resources -> Proxies** 中配置本地网络代理。
-  2. 也可尝试单独拉取耗时镜像重试，如：`docker pull mysql:8.0.46`、`docker pull mongo:8.0.16`、`docker pull redis:6.0.16`。
+  2. 也可尝试单独拉取耗时镜像重试，如：`docker pull mysql:8.0.46`、`docker pull mongo:8.0.29-noble`、`docker pull redis:6.0.16`。
 
 ### Q2: 出现 `! sp-es Warning pull access denied for sp-es` 警告？
 * **说明**：`sp-es` 是本项目本地基于 Dockerfile 构建的镜像（带 IK 中文分词插件），而非公网公共镜像。Docker Compose 启动时如果本地尚未生成该镜像，会尝试从 Docker Hub 查询并输出该提示，随后自动降级为本地构建。

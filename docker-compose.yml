@@ -179,8 +179,12 @@ services:
       - sp
 
   sp-mongodb:
-    image: mongo:8.0.16
+    image: mongo:8.0.29-noble
     container_name: sp-mongodb
+    # Docker Desktop 虚拟机内核为 7.x，命中 MongoDB 对内核 6.19+ 的已知不兼容保护（SERVER-121912），
+    # 禁用 glibc rseq 使 TCMalloc 回退到线程缓存即可正常启动
+    environment:
+      GLIBC_TUNABLES: glibc.cpu.rseq=0
     ports:
       - "127.0.0.1:27017:27017"
     volumes:
