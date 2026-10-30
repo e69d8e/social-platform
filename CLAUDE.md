@@ -16,13 +16,13 @@ docker compose up -d sp-mysql sp-redis sp-es sp-mongodb sp-kibana sp-nginx-dev
 ./mvnw test -Dtest=ClassName#methodName  # Run a single test
 ```
 
-Environment variables (see `.env.example`): `PASSWORD` (MySQL/Redis/JWT secret), `OPENAI_API_KEY` (AI model API key), `OPENAI_BASE_URL` (AI API base URL, default `https://api.deepseek.com`), `MODEL_NAME` (AI model name, default `deepseek-v4-flash`), `HTML_PATH` (Nginx static files root, images stored under `${HTML_PATH}/imgs`), `IMG_BASE_URL` (image access prefix, default `http://127.0.0.1:8080/imgs`). Optional: `CORS_ORIGIN` (default `http://127.0.0.1:5173,http://127.0.0.1:8080,http://localhost:5173,http://localhost:8080`).
+Environment variables (see `.env.example`): `PASSWORD` (MySQL/Redis/JWT secret), `OPENAI_API_KEY` (AI model API key), `OPENAI_BASE_URL` (AI API base URL, default `https://api.deepseek.com`), `MODEL_NAME` (AI model name, default `deepseek-v4-flash`), `HTML_PATH` (Nginx static files root), `IMG_BASE_URL` (image access prefix, default `http://127.0.0.1:8080/imgs`). Optional: `CORS_ORIGIN` (default `http://127.0.0.1:5173,http://127.0.0.1:8080,http://localhost:5173,http://localhost:8080`).
 
 `spring.config.import: optional:file:.env[.properties]` is set in `application.yaml`, so Spring picks up `.env` automatically — no need to `source .env` before running.
 
 Dependencies: MySQL (3306), Redis (6379/db1), Elasticsearch (9200), MongoDB (27017), Kibana (5601), Nginx (8080). `docker-compose.yml` includes `sp-app` (full container deploy) and `sp-nginx-dev` (host-routed for local IDEA debugging) — see README §"本地日常开发模式".
 
-Database setup is automatic via `docker-entrypoint-initdb.d` mount of `src/main/resources/social_platform.sql` on first MySQL container boot. The schema includes seed users (`li`/`admin`, `dufu`, `wangwei`, `baijvyi`, `libai` — all password `123456`).
+Database setup is automatic via `docker-entrypoint-initdb.d` mount of `src/main/resources/social_platform.sql` on first MySQL container boot. The schema includes seed users: `li` (admin), `dufu` (user), `wangwei` (user), `baijvyi` (reviewer) — all password `123456`.
 
 ## Architecture
 

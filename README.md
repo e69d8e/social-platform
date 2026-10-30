@@ -12,15 +12,15 @@
 | 类别 | 技术 / 组件 | 版本 | 说明 |
 |---|---|---|---|
 | **语言 / 核心框架** | Java / Spring Boot | 21 / 3.4.12 | 基础开发框架，开启容器内存感知与分层打包 |
-| **安全与认证** | Spring Security + JJWT | 6.4.2 / 0.9.1 | JWT 双 Token 无状态认证 + Redis 黑名单 |
+| **安全与认证** | Spring Security + JJWT | Boot 托管 (6.4.x) / 0.9.1 | JWT 双 Token 无状态认证 + Redis 黑名单 |
 | **ORM / 数据持久化** | MyBatis-Plus | 3.5.15 | 简化 CRUD，自动填充字段，全 Lambda 条件构造 |
 | **关系型数据库** | MySQL | 8.0.46 | 业务核心数据存储（utf8mb4 字符集） |
 | **分布式缓存** | Redis | 6.0.16 | 点赞/关注缓存、用户签到位图、滑动窗口限流、游标分页 |
 | **全文搜索引擎** | Elasticsearch + IK 分词 | 9.2.0 | 帖子与用户全文检索、中文高亮分词 |
 | **文档数据库** | MongoDB | 8.0.29 | LangChain4j AI 助手多轮对话记忆持久化 |
 | **对象存储** | MinIO | RELEASE.2025-10-15 | 用户图片存储桶（头像/帖子封面），公共读经 Nginx 代理直出 |
-| **AI 大模型** | LangChain4j + DeepSeek | 1.3.0-beta9 | DeepSeek-V4-Flash 模型，SSE 流式对话与标题生成 |
-| **网关与反向代理** | Nginx | 1.30 (Alpine) | SPA 前端路由、MinIO 图片代理直出、WebSocket 代理 |
+| **AI 大模型** | LangChain4j + DeepSeek | 1.19.0-beta29 | DeepSeek-V4-Flash 模型，SSE 流式对话与标题生成 |
+| **网关与反向代理** | Nginx | stable-alpine | SPA 前端路由、MinIO 图片代理直出、WebSocket 代理 |
 | **接口文档** | Knife4j (OpenAPI 3) | 4.6.0 | 在线接口文档与调试控制台 |
 | **实时通信** | STOMP over WebSocket | — | 点对点私信推送与未读计数 |
 
@@ -150,9 +150,9 @@ flowchart TB
   - `5601`：（可选）Kibana 控制台
   - `8081`：（可选）Spring Boot 直连端口
 
-> ℹ️ **安全说明**：MySQL(`3306`) / Redis(`6379`) / Elasticsearch(`9200`) / MongoDB(`27017`) / MinIO(`9000` API 与 `9001` 控制台) 等数据端口已在 `docker-compose.yml` 中绑定 `127.0.0.1` 回环地址，仅宿主机本地（含本地 IDEA 开发模式）可访问，**无需也无法在安全组放行**；如需远程管理请使用 SSH 隧道（例如 `ssh -L 3306:127.0.0.1:3306 user@server`）。Elasticsearch 已启用认证（用户 `elastic`，密码为 `.env` 中的 `PASSWORD`），Spring Boot 客户端、Kibana 登录与健康检查均已接入该凭证；MinIO 已启用认证（用户 `minioadmin`，密码为 `.env` 的 `MINIO_ROOT_PASSWORD`，默认复用 `PASSWORD`），图片桶设为公共读、仅经 Nginx `/imgs` 代理对外直出；由于 Kibana(5601) 自身无独立认证体系，若保持 `5601` 对外，请在安全组中仅对可信 IP 放行。
+> ℹ️ **安全说明**：MySQL(`3306`) / Redis(`6379`) / Elasticsearch(`9200`) / MongoDB(`27017`) / MinIO(`9000` API 与 `9001` 控制台) 等数据端口已在 `docker-compose.yml` 中绑定 `127.0.0.1` 回环地址，仅宿主机本地（含本地 IDEA 开发模式）可访问，**无需也无法在安全组放行**；如需远程管理请使用 SSH 隧道（例如 `ssh -L 3306:127.0.0.1:3306 user@server`）。Elasticsearch 已启用认证（管理员用户 `elastic`，密码为 `.env` 中的 `PASSWORD`；Spring Boot 客户端、Kibana Web 登录与健康检查均使用该凭证；Compose 中 Kibana 服务与 ES 容器内部通信则使用由 `sp-es-init` 初始化的系统账号 `kibana_system`）；MinIO 已启用认证（用户 `minioadmin`，密码为 `.env` 的 `MINIO_ROOT_PASSWORD`，默认复用 `PASSWORD`），图片桶设为公共读、仅经 Nginx `/imgs` 代理对外直出；由于 Kibana(5601) 自身无独立认证体系，若保持 `5601` 对外，请在安全组中仅对可信 IP 放行。
 >
-> ℹ️ **内存说明**：已为各容器配置 `mem_limit` 内存上限（总上限约 5.6GB：sp-app 1g、sp-es 1g、sp-kibana 1g、sp-mysql 768m、sp-minio 512m、sp-mongodb 512m、sp-redis 320m、sp-nginx 128m），避免单个容器拖垮宿主机。
+> ℹ️ **内存说明**：已为各容器配置 `mem_limit` 内存上限（总上限约 5.24GB：sp-app 1g、sp-es 1g、sp-kibana 1g、sp-mysql 768m、sp-minio 512m、sp-mongodb 512m、sp-redis 320m、sp-nginx 128m），避免单个容器拖垮宿主机。
 
 ---
 
@@ -219,7 +219,7 @@ CORS_ORIGIN=http://127.0.0.1:5173,http://127.0.0.1:8080,http://localhost:5173,ht
 html/
 ├── index.html           # 前端 SPA 页面入口（已内置打包产物）
 ├── assets/              # 前端 JS/CSS 静态资源库（已内置打包产物）
-└── imgs/                # 历史存量图片目录（首次启动时由 sp-minio-init 自动迁移进 MinIO，此后仅作备份）
+└── imgs/                # 历史存量图片目录（仅作本地历史备份，图片已统一由 MinIO 对象存储托管）
 ```
 
 #### 步骤 4：一键构建并后台启动所有服务
@@ -244,7 +244,7 @@ html/
 ```bash
 docker compose ps
 ```
-所有容器状态显示为 `Up` 或 `healthy` 即表示全套服务就绪（`sp-es-init` 与 `sp-minio-init` 为一次性初始化任务，显示 `Exited (0)` 属正常；`sp-minio-init` 会将 `html/imgs` 下的存量图片自动迁移至 MinIO 桶，幂等可重复执行）。
+所有容器状态显示为 `Up` 或 `healthy` 即表示全套服务就绪（`sp-es-init` 与 `sp-minio-volume-init` 为一次性初始化任务，分别负责 ES 认证密码配置与 MinIO 数据卷权限初始化，执行完毕后显示 `Exited (0)` 属正常；系统默认静态资源如默认头像等会在后端服务启动时由 `MinioBucketInitializer` 自动检查并补传至 MinIO 存储桶）。
 
 ---
 
@@ -255,7 +255,7 @@ docker compose ps
 | 🌐 **平台前端主页** | `http://<服务器IP>:8080` | 前端 SPA 页面（自动响应路由） |
 | 🖼️ **图片静态资源直出** | `http://<服务器IP>:8080/imgs/...` | Nginx 代理 MinIO 对象存储直出，无业务开销 |
 | 📖 **API 在线接口文档** | `http://<服务器IP>:8080/doc.html` | Knife4j 调试接口文档 |
-| 📊 **Kibana 控制台** | `http://<服务器IP>:5601` | ES 数据可视化看板（账号 `elastic`，密码为 `.env` 的 `PASSWORD`） |
+| 📊 **Kibana 控制台** | `http://<服务器IP>:5601` | ES 数据可视化看板（Web 登录账号 `elastic`，密码为 `.env` 的 `PASSWORD`；Compose 服务内部连接使用 `kibana_system`） |
 
 ---
 
@@ -268,8 +268,7 @@ docker compose ps
 | **`li`** | `123456` | **管理员 (ROLE_ADMIN)** | 拥有系统全量管理权限、封禁用户、指派审核员 |
 | **`dufu`** | `123456` | 普通用户 (ROLE_USER) | 发帖、评论、互动、关注 |
 | **`wangwei`** | `123456` | 普通用户 (ROLE_USER) | 发帖、评论、互动、关注 |
-| **`baijvyi`** | `123456` | 普通用户 (ROLE_USER) | 发帖、评论、互动、关注 |
-| **`libai`** | `123456` | 普通用户 (ROLE_USER) | 发帖、评论、互动、关注 |
+| **`baijvyi`** | `123456` | **审核员 (ROLE_REVIEWER)** | 违规内容审核、下架帖子与删除违规评论 |
 
 ---
 
@@ -483,7 +482,7 @@ docker compose up -d sp-mysql sp-redis sp-es sp-mongodb sp-minio sp-kibana sp-ng
 ```text
 social-platform/
 ├── Dockerfile               # 多阶段分层镜像构建（BuildKit 缓存加速 + 非 Root 安全运行）
-├── docker-compose.yml       # 全套 8 大服务容器编排与健康检查配置（含 ES 认证初始化一次性任务）
+├── docker-compose.yml       # 全套 8 大服务容器编排与健康检查配置（含 ES 认证与 MinIO 卷权限初始化一次性任务）
 ├── docker-entrypoint.sh     # 容器启动自愈脚本（解决 Linux 挂载权限并降权运行）
 ├── .dockerignore            # 构建上下文过滤（排除本地大文件）
 ├── .env.example             # 环境变量模版
@@ -494,7 +493,7 @@ social-platform/
 ├── html/                    # 宿主机挂载目录（前端静态文件）
 │   ├── index.html           # 前端 SPA 首页（已内置打包产物，开箱即用）
 │   ├── assets/              # 前端 JS/CSS 静态资源库（已内置打包产物）
-│   └── imgs/                # 历史存量图片目录（首次启动由 sp-minio-init 迁移至 MinIO）
+│   └── imgs/                # 历史存量图片目录（仅作本地历史备份，图片已统一由 MinIO 对象存储托管）
 ├── elasticsearch/           # Elasticsearch Docker 构建目录（集成 IK 中文分词）
 ├── docs/                    # 详细设计与架构说明文档
 │   ├── architecture.html        # 高层运行时架构交互式图表（支持深浅色主题、蓝图/信号流模式、路径探索与动效导出）

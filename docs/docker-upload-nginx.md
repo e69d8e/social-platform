@@ -28,7 +28,7 @@ docker-compose 服务：sp-minio（alpine/minio:RELEASE.2025-10-15T17-29-55Z，M
 | **sp-app**（Spring Boot） | MinIO Java SDK | `http://sp-minio:9000`（容器网络） | 上传 `putObject` / 删除 `removeObject` / 启动建桶设策略 |
 | **sp-nginx**（容器模式） | HTTP 反向代理 | `http://sp-minio:9000/social-platform/` | 生产模式图片直出 |
 | **sp-nginx-dev**（开发模式） | HTTP 反向代理 | `http://host.docker.internal:9000/social-platform/` | 本地 IDEA 模式图片直出（宿主机 MinIO 回环端口） |
-| **sp-minio-init**（一次性任务） | rclone | `http://sp-minio:9000` | 幂等迁移：rclone 拷贝存量 `html/imgs` 图片入桶（建桶与公共读策略由后端启动逻辑兜底） |
+| **sp-minio-volume-init**（一次性任务） | 容器命令 (`chown`) | — | 卷属主初始化：将 MinIO 数据卷属主修正为容器内 minio 用户（uid 100/gid 101） |
 
 > [!NOTE]
 > 本地 IDEA 开发模式下，Spring Boot 通过 `MINIO_ENDPOINT` 默认值 `http://127.0.0.1:9000` 访问 `sp-minio` 映射到宿主机回环的端口，无需任何额外配置。
@@ -157,18 +157,16 @@ int d2 = (name.hashCode() >> 4) & 0xF;          // 二级前缀 0~f (16个桶)
 
 ---
 
-## 5. 存量数据迁移（sp-minio-init）
+## 5. 数据卷属主初始化与内置静态图片补全
 
-旧版本图片直接落盘宿主机 `./html/imgs`，升级后由一次性任务 `sp-minio-init`（`rclone/rclone` 镜像，通过环境变量配置 MinIO S3 连接）自动迁移：
+MinIO 数据存储与静态资源生命周期由以下机制协同保障：
 
-```bash
-rclone mkdir sp:social-platform                      # 建桶（幂等）
-rclone copy /imgs sp:social-platform --transfers 4   # 增量拷贝存量图片
-```
-
-- 任务挂载 `${HTML_PATH:-./html}/imgs`（只读），迁移完成后宿主机目录仅作备份保留，不再参与线上读写。
-- `rclone copy` 为增量同步（按大小+修改时间跳过相同文件），重复执行安全；后端启动时的 `initBucket()` 也会兜底建桶与设置策略，两条路径互为幂等保障。
-- 辅助任务 `sp-minio-volume-init` 在 MinIO 启动前把命名卷属主修正为容器内的 minio 用户（uid 100），解决 Docker 新建卷默认 root 属主导致的 `file access denied`。
+1. **卷属主初始化（`sp-minio-volume-init`）**：
+   - `alpine/minio` 镜像默认以非 root 的 `minio` 用户（uid 100/gid 101）运行。
+   - Docker 新建命名卷属主默认为 root，因此在 MinIO 启动前通过一次性容器以 root 身份执行 `chown -R 100:101 /data`，避免 MinIO 启动报 `file access denied`。
+2. **系统静态图片启动补全（`MinioBucketInitializer`）**：
+   - 存量图片已全部切入 MinIO 托管，原 rclone 一次性迁移任务已移除。
+   - 新环境部署时，后端启动类 `MinioBucketInitializer` 会自动建桶、配置公共读策略，并在桶内缺失 `avatar/default.jpg` 与 `logo.png` 时从 classpath 自动补传，无需手动迁移即可开箱自举。
 
 ---
 
@@ -229,9 +227,9 @@ location /imgs/ {
 
 ## 8. 部署与配置检查清单（防踩坑必读）
 
-1. **存量图片迁移**：
-   - 老版本部署升级后，首次 `docker compose up -d` 会自动运行 `sp-minio-init`，将宿主机 `./html/imgs` 下的历史图片（含 `avatar/default.jpg` 默认头像）迁移进 MinIO 桶；任务显示 `Exited (0)` 即成功。
-   - 迁移幂等可重复：手动补跑 `docker compose up sp-minio-init` 即可。
+1. **静态资源与数据卷自举**：
+   - 首次 `docker compose up -d` 会自动运行 `sp-minio-volume-init` 修正数据卷属主权限，显示 `Exited (0)` 属正常。
+   - 后端启动时 `MinioBucketInitializer` 会自动创建存储桶、配置公共读策略并补齐系统静态图片（默认头像等），无需人工手动迁移。
 2. **`MINIO_ROOT_USER` / 密码**：
    - 密码复用 `.env` 的 `PASSWORD`；修改后需同步重建 MinIO 数据卷（`docker compose down -v`，会清空全部数据）。
    - MinIO 端口（9000/9001）仅绑定宿主机回环地址，公网无法直接访问，图片统一走 Nginx 8080 代理直出。
