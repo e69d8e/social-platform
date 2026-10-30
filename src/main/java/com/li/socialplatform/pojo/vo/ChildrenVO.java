@@ -20,4 +20,6 @@ public class ChildrenVO implements Serializable {
     private String content;
     private CommentUserVO user;
     private CommentUserVO replyUser;
+    private Integer likeCount; // 点赞数
+    private Boolean liked; // 当前用户是否已点赞
 }

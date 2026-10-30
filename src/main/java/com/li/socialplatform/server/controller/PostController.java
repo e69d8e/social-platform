@@ -72,6 +72,14 @@ public class PostController {
         return postService.deletePost(id);
     }
 
+    @PutMapping("/privacy/{id}")
+    @Operation(summary = "设置帖子私密状态", description = "切换帖子的私密状态（仅作者本人可操作）")
+    public Result updatePostPrivacy(
+            @Parameter(description = "帖子ID") @PathVariable Long id,
+            @Parameter(description = "是否私密") @RequestParam Boolean isPrivate) {
+        return postService.updatePostPrivacy(id, isPrivate);
+    }
+
     @GetMapping
     @Operation(summary = "生成帖子ID", description = "发布前获取一个唯一的帖子ID")
     public Result generatePostId() {

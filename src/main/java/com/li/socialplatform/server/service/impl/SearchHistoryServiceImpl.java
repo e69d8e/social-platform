@@ -31,13 +31,14 @@ public class SearchHistoryServiceImpl implements ISearchHistoryService {
         if (userId == null) {
             return;
         }
+        // 搜索历史不再区分帖子/用户：仅按关键词去重，type 仅记录最近一次搜索入口
         List<SearchHistory> list = searchHistoryMapper.selectList(new LambdaQueryWrapper<SearchHistory>()
                 .eq(SearchHistory::getUserId, userId)
-                .eq(SearchHistory::getKeyword, keyword)
-                .eq(SearchHistory::getType, type));
+                .eq(SearchHistory::getKeyword, keyword));
         if (!list.isEmpty()) {
             SearchHistory exist = list.get(0);
             exist.setCreateTime(LocalDateTime.now());
+            exist.setType(type);
             searchHistoryMapper.updateById(exist);
             for (int i = 1; i < list.size(); i++) {
                 searchHistoryMapper.deleteById(list.get(i).getId());

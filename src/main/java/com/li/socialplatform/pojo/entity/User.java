@@ -51,6 +51,10 @@ public class User implements Serializable {
     @TableField(value = "avatar")
     private String avatar;
 
+    /** 主页背景图URL，空/NULL 表示使用默认背景 */
+    @TableField(value = "background_url")
+    private String backgroundUrl;
+
     @Field(type = FieldType.Text, analyzer = "ik_smart")
     @TableField(value = "bio")
     private String bio;

@@ -25,6 +25,8 @@ public class Comment implements Serializable {
     private Long userId;
     @TableField(value = "content")
     private String content;
+    @TableField(value = "like_count")
+    private Integer likeCount;
     @TableField(value = "create_time", fill = FieldFill.INSERT)
     private LocalDateTime createTime;
 //    // 不是数据库字段，只是为了返回给前端

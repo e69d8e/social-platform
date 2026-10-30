@@ -76,6 +76,13 @@ public class UploadFileController {
         return upload(image, null, AVATAR_ASPECT_RATIO, "1:1");
     }
 
+    @PostMapping("/background")
+    @Operation(summary = "上传主页背景图", description = "上传个人主页背景图（最大10MB，支持jpg/png/gif/webp等格式，不限宽高比）")
+    public Result uploadBackgroundImage(
+            @Parameter(description = "背景图文件") @RequestParam("file") MultipartFile image) {
+        return upload(image, null, null, null);
+    }
+
     @GetMapping("/check")
     @Operation(summary = "秒传预检", description = "按文件 SHA-256 查询服务端是否已存在相同内容；命中则复用已有 URL 并补登一条复用记录，客户端可直接跳过文件传输")
     public Result checkFileHash(

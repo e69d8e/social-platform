@@ -43,7 +43,6 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.data.elasticsearch.client.elc.NativeQuery;
 import org.springframework.data.elasticsearch.core.ElasticsearchOperations;
-import org.springframework.data.redis.connection.BitFieldSubCommands;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.DisabledException;
@@ -277,6 +276,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         user.setGender(userDTO.getGender() == null ? user.getGender() : userDTO.getGender());
         user.setFansPrivate(userDTO.getFansPrivate() == null ? user.getFansPrivate() : userDTO.getFansPrivate());
         user.setFollowPrivate(userDTO.getFollowPrivate() == null ? user.getFollowPrivate() : userDTO.getFollowPrivate());
+        // 背景图：null 表示未修改，空串表示恢复默认背景
+        user.setBackgroundUrl(userDTO.getBackgroundUrl() == null ? user.getBackgroundUrl() : userDTO.getBackgroundUrl());
         userMapper.updateById(user);
         // 更新 Elasticsearch
         userElasticsearchRepository.save(user);
@@ -289,6 +290,17 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
             String url = userDTO.getOldAvatar().substring(systemConstants.baseUrl.length());
             int delete = fileMapper.delete(new LambdaQueryWrapper<File>().eq(File::getUrl, url).eq(File::getUserId, user.getId()));
             if (delete >0) {
+                deleteFileUtil.deleteFile(url);
+            }
+        }
+        // 删除旧背景图
+        if (userDTO.getBackgroundUrl() != null
+                && userDTO.getOldBackgroundUrl() != null
+                && !userDTO.getOldBackgroundUrl().isEmpty()
+                && !userDTO.getOldBackgroundUrl().equals(userDTO.getBackgroundUrl())) {
+            String url = userDTO.getOldBackgroundUrl().substring(systemConstants.baseUrl.length());
+            int delete = fileMapper.delete(new LambdaQueryWrapper<File>().eq(File::getUrl, url).eq(File::getUserId, user.getId()));
+            if (delete > 0) {
                 deleteFileUtil.deleteFile(url);
             }
         }
@@ -310,50 +322,44 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
     public Result signIn() {
         LocalDateTime now = LocalDateTime.now();
         String key = KeyConstant.SIGN_IN_KEY + getCurrentUsername() + now.format(DateTimeFormatter.ofPattern("yyyyMM"));
-        // 获取今天是当月的第几天
-        int day = now.getDayOfMonth();
         // 设置签到
-        redisUtil.values().setBit(key, day - 1, true);
-        // 计算当月截至今天连续签到次数
-        List<Long> longs = redisUtil.values().bitField(key, BitFieldSubCommands.create().get(BitFieldSubCommands.BitFieldType.unsigned(day)).valueAt(0) // 从第0位开始读取
-        );
-        // 0000000011
-        Long tmp = null;
-        if (longs != null) {
-            tmp = longs.getFirst();
-        }
-        int count = 0;
-        while (tmp != null && tmp != 0) {
-            if ((tmp & 1) == 1) {
-                count++;
-            } else {
-                break;
-            }
-            tmp = tmp >> 1;
-        }
-        return Result.ok(count);
+        redisUtil.values().setBit(key, now.getDayOfMonth() - 1, true);
+        return Result.ok(calculateConsecutiveDays(now));
     }
 
     @Override
     public Result signInCount() {
-        LocalDateTime now = LocalDateTime.now();
-        String key = KeyConstant.SIGN_IN_KEY + getCurrentUsername() + now.format(DateTimeFormatter.ofPattern("yyyyMM"));
-        List<Long> longs = redisUtil.values().bitField(key, BitFieldSubCommands.create().get(BitFieldSubCommands.BitFieldType.unsigned(now.getDayOfMonth())).valueAt(0) // 从第0位开始读取
-        );
-        Long tmp = null;
-        if (longs != null) {
-            tmp = longs.getFirst();
-        }
-        int count = 0;
-        while (tmp != null && tmp != 0) {
-            if ((tmp & 1) == 1) {
-                count++;
-            } else {
-                break;
+        return Result.ok(calculateConsecutiveDays(LocalDateTime.now()));
+    }
+
+    /** 连续签到回溯上限（天），防御异常数据导致死循环 */
+    private static final int MAX_SIGN_IN_STREAK_DAYS = 3660;
+
+    /**
+     * 计算截至今天的连续签到天数（跨月累计）：
+     * 今天已签到则从今天起算；今天尚未签到则从昨天起算（当天补签不打断连续性）。
+     * 逐日回溯查询 Redis 位图，跨月时自动切换到上月的签到 key。
+     */
+    private int calculateConsecutiveDays(LocalDateTime now) {
+        if (!isSignedOn(now)) {
+            now = now.minusDays(1);
+            if (!isSignedOn(now)) {
+                return 0;
             }
-            tmp = tmp >>> 1;
         }
-        return Result.ok(count);
+        int days = 0;
+        while (isSignedOn(now) && days < MAX_SIGN_IN_STREAK_DAYS) {
+            days++;
+            now = now.minusDays(1);
+        }
+        return days;
+    }
+
+    /** 查询某天是否签到（按月位图存储） */
+    private boolean isSignedOn(LocalDateTime dateTime) {
+        String key = KeyConstant.SIGN_IN_KEY + getCurrentUsername()
+                + dateTime.format(DateTimeFormatter.ofPattern("yyyyMM"));
+        return Boolean.TRUE.equals(redisUtil.values().getBit(key, dateTime.getDayOfMonth() - 1));
     }
 
     @Override
@@ -379,7 +385,8 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
                             .should(s -> s.match(m -> m.field("title").query(keyword)))
                             .should(s -> s.match(m -> m.field("content").query(keyword)))
                             .minimumShouldMatch("1")
-                            .filter(f -> f.term(t -> t.field("enabled").value(FieldValue.of(true))))))
+                            .filter(f -> f.term(t -> t.field("enabled").value(FieldValue.of(true))))
+                            .mustNot(mn -> mn.term(t -> t.field("isPrivate").value(FieldValue.of(true))))))
                     .build();
             total = elasticsearchOperations.count(countQuery, Post.class);
         }
@@ -410,6 +417,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
             User author = userMap.get(post.getUserId());
             if (author != null) {
                 postVO.setUsername(author.getUsername());
+                postVO.setNickname(author.getNickname());
             }
             postVO.setLiked(likedMap.getOrDefault(post.getId(), false));
             postVO.setLikeCount(likeCounts.getOrDefault(post.getId(), 0));

@@ -155,6 +155,8 @@ public class DataInitializer implements ApplicationRunner {
                     ep.setCategoryId(p.getCategoryId());
                     ep.setCreateTime(p.getCreateTime());
                     ep.setEnabled(p.getEnabled());
+                    ep.setIsPrivate(Boolean.TRUE.equals(p.getIsPrivate()));
+                    ep.setStarCount(p.getStarCount() != null ? p.getStarCount() : 0);
                     ep.setLikeCount(p.getLikeCount() != null ? p.getLikeCount() : 0);
                     ep.setViewCount(p.getViewCount() != null ? p.getViewCount() : 0);
                     return ep;

@@ -26,6 +26,8 @@ public class PostVO implements Serializable {
 
     private String username;
 
+    private String nickname;
+
     private String title;
 
     private String content;
@@ -40,6 +42,12 @@ public class PostVO implements Serializable {
     private Boolean liked; // 是否点赞
 
     private Integer likeCount; // 点赞数
+
+    private Boolean starred; // 是否收藏
+
+    private Integer starCount; // 收藏数
+
+    private Boolean isPrivate; // 是否私密
 
     private Integer viewCount;
 

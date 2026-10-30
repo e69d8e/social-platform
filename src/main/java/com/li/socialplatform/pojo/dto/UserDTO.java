@@ -22,6 +22,9 @@ public class UserDTO implements Serializable {
     private String nickname;
     private String oldAvatar;
     private String avatar;
+
+    private String backgroundUrl;
+    private String oldBackgroundUrl;
     @Size(max = 2000, message = "简介长度不能超过2000")
     private String bio;
     private Integer gender;

@@ -18,6 +18,8 @@ public interface IPostService extends IService<Post> {
 
     Result deletePost(Long id);
 
+    Result updatePostPrivacy(Long id, Boolean isPrivate);
+
     Result generatePostId();
 
     Result recordView(Long postId);

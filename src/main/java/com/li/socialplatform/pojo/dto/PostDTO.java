@@ -30,4 +30,9 @@ public class PostDTO implements Serializable {
      * 帖子分类ID，允许为空；为空时由服务层默认为“其他”分类（id=1）
      */
     private Integer categoryId;
+
+    /**
+     * 是否设为私密（仅作者自己可见），默认公开
+     */
+    private Boolean isPrivate;
 }

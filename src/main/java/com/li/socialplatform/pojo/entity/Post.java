@@ -52,9 +52,18 @@ public class Post implements Serializable {
     @TableField(value = "enabled")
     private Boolean enabled;
 
+    /** 是否私密（仅作者自己可见） */
+    @Field(type = FieldType.Boolean)
+    @TableField(value = "is_private")
+    private Boolean isPrivate;
+
     @Field(type = FieldType.Integer)
     @TableField("like_count")
     private Integer likeCount;
+
+    @Field(type = FieldType.Integer)
+    @TableField("star_count")
+    private Integer starCount;
 
     @Field(type = FieldType.Integer)
     @TableField("view_count")

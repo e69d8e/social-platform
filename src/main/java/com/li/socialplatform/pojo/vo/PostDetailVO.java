@@ -26,6 +26,9 @@ public class PostDetailVO implements Serializable {
     private LocalDateTime createTime;
     private Boolean liked;
     private Integer likeCount;
+    private Boolean starred;
+    private Integer starCount;
+    private Boolean isPrivate;
     @JsonFormat(shape = JsonFormat.Shape.STRING)
     private Long userId;
     private String nickname;

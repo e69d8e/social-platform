@@ -118,6 +118,7 @@ public class ReviewerServiceImpl implements IReviewerService {
             User author = userMap.get(post.getUserId());
             if (author != null) {
                 postVO.setUsername(author.getUsername());
+                postVO.setNickname(author.getNickname());
             }
             postVO.setLikeCount(likeCounts.getOrDefault(id, 0));
             postVO.setLiked(likedMap.getOrDefault(id, false));
@@ -180,6 +181,7 @@ public class ReviewerServiceImpl implements IReviewerService {
             User author = userMap.get(post.getUserId());
             if (author != null) {
                 postVO.setUsername(author.getUsername());
+                postVO.setNickname(author.getNickname());
             }
             postVO.setLikeCount(dataCacheUtil.getLikeCount(post.getId()));
             postVO.setLiked(reviewerId != null && dataCacheUtil.isLiked(post.getId(), reviewerId));

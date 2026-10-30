@@ -25,6 +25,8 @@ public class CommentVO implements Serializable {
     private LocalDateTime createTime;
     List<ChildrenVO> children; // 子评论
     private CommentUserVO replyUser; // 子评论的回复的用户
+    private Integer likeCount; // 点赞数
+    private Boolean liked; // 当前用户是否已点赞
 }
 //[
 //        {

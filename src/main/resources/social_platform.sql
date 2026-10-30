@@ -15,6 +15,7 @@ CREATE TABLE if not exists `user`
     `nickname`       VARCHAR(64)  NOT NULL COMMENT '昵称',
     `password`       VARCHAR(128) NOT NULL COMMENT '密码（加密后的哈希值）',
     `avatar`         VARCHAR(255)          DEFAULT 'http://127.0.0.1:8080/imgs/avatar/default.jpg' COMMENT '头像URL',
+    `background_url` VARCHAR(255) NULL COMMENT '主页背景图URL（NULL 使用默认背景）',
     `bio`            VARCHAR(255) NULL COMMENT '个人简介',
     `gender`         TINYINT               DEFAULT 0 COMMENT '性别 (0: 未知, 1: 男, 2: 女)',
     `create_time`    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '注册时间',
@@ -116,7 +117,9 @@ CREATE TABLE if not exists `post`
     `category_id` Int               default 1 COMMENT '分类ID',
     `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '发布时间',
     `enabled`     TINYINT(1)        DEFAULT 1 COMMENT '是否被封禁',
+    `is_private`  TINYINT(1)        DEFAULT 0 COMMENT '是否私密（0: 公开, 1: 私密仅自己可见）',
     `like_count`  INT               DEFAULT 0,
+    `star_count`  INT               DEFAULT 0 COMMENT '收藏数',
     `view_count`  INT               DEFAULT 0,
     PRIMARY KEY (`id`),
     KEY `idx_user_time` (`user_id`, `create_time` DESC)
@@ -131,6 +134,7 @@ CREATE TABLE if not exists `comment`
     `post_id`     BIGINT   NOT NULL COMMENT '关联帖子ID',
     `user_id`     BIGINT   NOT NULL COMMENT '评论发布者ID',
     `content`     TEXT     NOT NULL COMMENT '评论内容',
+    `like_count`  INT               DEFAULT 0 COMMENT '点赞数',
     `parent_id`   BIGINT   NULL COMMENT '父评论ID (用于二级评论，若为一级评论则NULL)',
     `reply_to`    BIGINT   NULL COMMENT '回复目标用户ID',
     `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '评论时间',
@@ -583,3 +587,33 @@ CREATE TABLE IF NOT EXISTS `user_inbox`
     KEY `idx_user_time` (`user_id`, `create_time` DESC)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4 COMMENT ='用户收件箱表';
+
+DROP TABLE IF EXISTS `star_record`;
+
+# 帖子收藏记录表
+CREATE TABLE IF NOT EXISTS `star_record`
+(
+    `id`          BIGINT   NOT NULL COMMENT '收藏记录ID',
+    `post_id`     BIGINT   NOT NULL COMMENT '被收藏的帖子ID',
+    `user_id`     BIGINT   NOT NULL COMMENT '收藏用户ID',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '收藏时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_post_user` (`post_id`, `user_id`),
+    KEY `idx_user_id` (`user_id`)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4 COMMENT ='帖子收藏记录表';
+
+DROP TABLE IF EXISTS `comment_like_record`;
+
+# 评论点赞记录表
+CREATE TABLE IF NOT EXISTS `comment_like_record`
+(
+    `id`          BIGINT   NOT NULL COMMENT '记录ID',
+    `comment_id`  BIGINT   NOT NULL COMMENT '被点赞的评论ID',
+    `user_id`     BIGINT   NOT NULL COMMENT '点赞用户ID',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '点赞时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_comment_user` (`comment_id`, `user_id`),
+    KEY `idx_comment_id` (`comment_id`)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4 COMMENT ='评论点赞记录表';

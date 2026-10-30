@@ -29,6 +29,14 @@ public class CommentController {
         return commentService.addComment(commentDTO);
     }
 
+    @PutMapping("/like/{commentId}")
+    @Operation(summary = "评论点赞/取消点赞", description = "对评论进行点赞或取消点赞（切换操作）")
+    @RateLimit()
+    public Result likeComment(
+            @Parameter(description = "评论ID") @PathVariable Long commentId) {
+        return commentService.likeComment(commentId);
+    }
+
     @GetMapping("/{id}")
     @Operation(summary = "获取评论", description = "获取帖子的一级评论列表（游标分页）")
     public Result getComments(

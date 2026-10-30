@@ -71,6 +71,8 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
     private final ElasticsearchTemplate elasticsearchTemplate;
     private final UserInboxMapper userInboxMapper;
     private final AsyncTaskUtil asyncTaskUtil;
+    private final StarRecordMapper starRecordMapper;
+    private final CommentLikeRecordMapper commentLikeRecordMapper;
 
     /** 默认分类ID：social_platform.sql 中 category 表种子数据 id=1 为“其他” */
     private static final Integer DEFAULT_CATEGORY_ID = 1;
@@ -121,34 +123,40 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         post.setContent(content);
         post.setCover(postDTO.getCover());
         post.setCategoryId(postDTO.getCategoryId() == null ? DEFAULT_CATEGORY_ID : postDTO.getCategoryId());
+        boolean isPrivate = Boolean.TRUE.equals(postDTO.getIsPrivate());
+        post.setIsPrivate(isPrivate);
         postMapper.insert(post);
-        log.info("用户 {} 发表了帖子 {}", id, post.getId());
+        log.info("用户 {} 发表了帖子 {}（私密: {}）", id, post.getId(), isPrivate);
         long time = System.currentTimeMillis();
         // 将帖子添加到缓存中
         redisUtil.zsets().add(KeyConstant.POST_LIST_KEY, post.getId(), time);
         redisUtil.zsets().add(KeyConstant.POST_KEY + id, post.getId(), time);
-        // 将帖子添加到首页帖子表
-        HomePost homePost = new HomePost();
-        homePost.setPostId(post.getId());
-        homePost.setUserId(id);
-        homePostMapper.insert(homePost);
-        // 添加到首页帖子缓存
-        String homePostKey = KeyConstant.HOME_POST_LIST_KEY;
-        redisUtil.zsets().add(homePostKey, post.getId(), time);
-        redisUtil.expire(homePostKey, CacheTtl.DEFAULT_DAYS, TimeUnit.DAYS);
-        // 查询所有粉丝
-        List<Long> fanIds = getFanIds(id);
-        // 将帖子 pipeline 批量添加到粉丝缓存
-        if (!fanIds.isEmpty()) {
-            redisUtil.pipeline(ops -> {
-                for (Long fanId : fanIds) {
-                    ops.opsForZSet().add(KeyConstant.POST_LIST_KEY + fanId, post.getId(), time);
-                }
-            });
-            // 异步写入粉丝收件箱表
-            asyncTaskUtil.asyncInsertUserInbox(fanIds, post.getId(), id);
+        // 私密帖子不进入首页推荐流，也不推送给粉丝
+        if (!isPrivate) {
+            // 将帖子添加到首页帖子表
+            HomePost homePost = new HomePost();
+            homePost.setPostId(post.getId());
+            homePost.setUserId(id);
+            homePostMapper.insert(homePost);
+            // 添加到首页帖子缓存
+            String homePostKey = KeyConstant.HOME_POST_LIST_KEY;
+            redisUtil.zsets().add(homePostKey, post.getId(), time);
+            redisUtil.expire(homePostKey, CacheTtl.DEFAULT_DAYS, TimeUnit.DAYS);
+            // 查询所有粉丝
+            List<Long> fanIds = getFanIds(id);
+            // 将帖子 pipeline 批量添加到粉丝缓存
+            if (!fanIds.isEmpty()) {
+                redisUtil.pipeline(ops -> {
+                    for (Long fanId : fanIds) {
+                        ops.opsForZSet().add(KeyConstant.POST_LIST_KEY + fanId, post.getId(), time);
+                    }
+                });
+                // 异步写入粉丝收件箱表
+                asyncTaskUtil.asyncInsertUserInbox(fanIds, post.getId(), id);
+            }
         }
         post.setLikeCount(0);
+        post.setStarCount(0);
         post.setEnabled(true);
         // 转换为纯文本
         String text = HtmlUtils.htmlToPlainText(postDTO.getContent());
@@ -179,6 +187,13 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
                 return Result.error(MessageConstant.POST_NOT_EXIST);
             }
         }
+        // 私密帖子仅作者本人可见（管理员/审核员可放行用于内容管理）
+        boolean isModerator = loginUser != null
+                && (AuthorityConstant.REVIEWER.equals(loginUser.getAuthorityId()) || AuthorityConstant.ADMIN.equals(loginUser.getAuthorityId()));
+        if (Boolean.TRUE.equals(post.getIsPrivate())
+                && !Objects.equals(userId, post.getUserId()) && !isModerator) {
+            return Result.error(MessageConstant.POST_NOT_EXIST);
+        }
         User user = userMapper.selectById(post.getUserId());
         if (user == null) {
             return Result.error(MessageConstant.USER_NOT_FOUND);
@@ -193,6 +208,9 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         postDetailVO.setNickname(user.getNickname());
         postDetailVO.setCover(post.getCover());
         postDetailVO.setFollowed(dataCacheUtil.isFollowed(userId, user.getId()));
+        // 收藏信息
+        postDetailVO.setStarCount(post.getStarCount() == null ? 0 : post.getStarCount());
+        postDetailVO.setStarred(userId != null && isStarred(userId, id));
         // 读取浏览量（Redis 中待同步的增量 + DB 中已持久化的值）
         long viewDelta = viewCountCacheUtil.getViewDelta(id);
         postDetailVO.setViewCount((post.getViewCount() == null ? 0 : post.getViewCount()) + (int) viewDelta);
@@ -320,6 +338,7 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
                 .toList();
         Map<Long, Integer> likeCounts = dataCacheUtil.getLikeCounts(postIds);
         Map<Long, Boolean> likedMap = dataCacheUtil.isLikedBatch(userId, postIds);
+        Map<Long, Boolean> starredMap = getStarredMap(userId, postIds);
 
         List<PostVO> postVOS = new ArrayList<>();
         long minTime = 0L;
@@ -329,9 +348,12 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
             User author = userMap.get(post.getUserId());
             if (author != null) {
                 postVO.setUsername(author.getUsername());
+                postVO.setNickname(author.getNickname());
             }
             postVO.setLikeCount(likeCounts.getOrDefault(post.getId(), 0));
             postVO.setLiked(likedMap.getOrDefault(post.getId(), false));
+            postVO.setStarCount(post.getStarCount() == null ? 0 : post.getStarCount());
+            postVO.setStarred(starredMap.getOrDefault(post.getId(), false));
             postVOS.add(postVO);
             if (post.getCreateTime() != null) {
                 minTime = post.getCreateTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
@@ -406,27 +428,78 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
     @Override
     public Result userListPosts(Long id, Integer pageNum, Integer pageSize) {
         IPage<Post> page = new Page<>(pageNum, pageSize);
-        // 与 getScrollResult 行为一致：主页列表不展示已封禁帖子
+        Long userId = userIdUtil.getUserId();
+        // 与 getScrollResult 行为一致：主页列表不展示已封禁帖子；
+        // 私密帖子仅作者本人在自己主页可见
+        boolean isSelf = userId != null && userId.equals(id);
         IPage<Post> postIPage = postMapper.selectPage(page, new LambdaQueryWrapper<Post>()
                 .eq(Post::getUserId, id)
-                .eq(Post::getEnabled, true));
+                .eq(Post::getEnabled, true)
+                .eq(!isSelf, Post::getIsPrivate, false));
         List<Post> records = postIPage.getRecords();
         List<PostVO> postVOS = new ArrayList<>();
-        Long userId = userIdUtil.getUserId();
         User author = userMapper.selectById(id);
         String username = author != null ? author.getUsername() : null;
+        String nickname = author != null ? author.getNickname() : null;
         // 批量读取点赞数与点赞状态（pipeline 一次往返）
         List<Long> postIds = records.stream().map(Post::getId).toList();
         Map<Long, Integer> likeCounts = dataCacheUtil.getLikeCounts(postIds);
         Map<Long, Boolean> likedMap = dataCacheUtil.isLikedBatch(userId, postIds);
+        Map<Long, Boolean> starredMap = getStarredMap(userId, postIds);
         for (Post record : records) {
             PostVO postVO = BeanUtil.copyProperties(record, PostVO.class);
             postVO.setUsername(username);
+            postVO.setNickname(nickname);
             postVO.setLikeCount(likeCounts.getOrDefault(record.getId(), 0));
             postVO.setLiked(userId == null ? false : likedMap.getOrDefault(record.getId(), false));
+            postVO.setStarCount(record.getStarCount() == null ? 0 : record.getStarCount());
+            postVO.setStarred(starredMap.getOrDefault(record.getId(), false));
             postVOS.add(postVO);
         }
         return Result.ok(postVOS, postIPage.getTotal());
+    }
+
+    /**
+     * 设置帖子私密状态（仅作者本人可操作）。
+     * 设为私密时从首页推荐流移除；恢复公开时重新加入。
+     */
+    @Transactional
+    @Override
+    public Result updatePostPrivacy(Long id, Boolean isPrivate) {
+        Long userId = userIdUtil.getUserId();
+        Post post = postMapper.selectOne(new LambdaQueryWrapper<Post>().eq(Post::getUserId, userId).eq(Post::getId, id));
+        if (post == null) {
+            return Result.error(MessageConstant.POST_NOT_EXIST);
+        }
+        boolean targetPrivate = Boolean.TRUE.equals(isPrivate);
+        if (!Objects.equals(post.getIsPrivate(), targetPrivate)) {
+            Post update = new Post();
+            update.setId(id);
+            update.setIsPrivate(targetPrivate);
+            postMapper.updateById(update);
+            // 同步 ES（保留 ES 中的纯文本正文，不做整实体回写）
+            Post esPost = postElasticsearchRepository.findById(id).orElse(null);
+            if (esPost != null) {
+                esPost.setIsPrivate(targetPrivate);
+                postElasticsearchRepository.save(esPost);
+            }
+            long time = post.getCreateTime() != null
+                    ? post.getCreateTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+                    : System.currentTimeMillis();
+            if (targetPrivate) {
+                homePostMapper.delete(new LambdaQueryWrapper<HomePost>().eq(HomePost::getPostId, id));
+                redisUtil.zsets().remove(KeyConstant.HOME_POST_LIST_KEY, id);
+                redisUtil.zsets().remove(KeyConstant.POST_LIST_KEY, id);
+            } else {
+                HomePost homePost = new HomePost();
+                homePost.setPostId(id);
+                homePost.setUserId(post.getUserId());
+                homePostMapper.insert(homePost);
+                redisUtil.zsets().add(KeyConstant.HOME_POST_LIST_KEY, id, time);
+                redisUtil.zsets().add(KeyConstant.POST_LIST_KEY, id, time);
+            }
+        }
+        return Result.ok("操作成功", "");
     }
 
     @Transactional
@@ -460,7 +533,16 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         // 我的帖子删除
         redisUtil.zsets().remove(KeyConstant.POST_KEY + userId, id);
         // 删除帖子的评论
+        List<Comment> comments = commentMapper.selectList(new LambdaQueryWrapper<Comment>().eq(Comment::getPostId, id));
         commentMapper.delete(new LambdaQueryWrapper<Comment>().eq(Comment::getPostId, id));
+        // 删除评论的点赞记录
+        if (!comments.isEmpty()) {
+            List<Long> commentIds = comments.stream().map(Comment::getId).toList();
+            commentLikeRecordMapper.delete(new LambdaQueryWrapper<CommentLikeRecord>()
+                    .in(CommentLikeRecord::getCommentId, commentIds));
+        }
+        // 删除帖子的收藏记录
+        starRecordMapper.delete(new LambdaQueryWrapper<StarRecord>().eq(StarRecord::getPostId, id));
         // 删除帖子的图片
         List<File> files = fileMapper.selectList(new LambdaQueryWrapper<File>().eq(File::getPostId, id));
         fileMapper.delete(new LambdaQueryWrapper<File>().eq(File::getPostId, id));
@@ -490,6 +572,33 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
     public Result generatePostId() {
         Long id = redisIdUtils.nextId(KeyConstant.POST_ID_KEY);
         return Result.ok(id);
+    }
+
+    /** 查询当前用户是否收藏了某帖子 */
+    private boolean isStarred(Long userId, Long postId) {
+        if (userId == null || postId == null) {
+            return false;
+        }
+        return starRecordMapper.selectCount(new LambdaQueryWrapper<StarRecord>()
+                .eq(StarRecord::getUserId, userId)
+                .eq(StarRecord::getPostId, postId)) > 0;
+    }
+
+    /** 批量查询用户对帖子的收藏状态 */
+    private Map<Long, Boolean> getStarredMap(Long userId, Collection<Long> postIds) {
+        Map<Long, Boolean> result = new HashMap<>();
+        if (userId == null || postIds == null || postIds.isEmpty()) {
+            return result;
+        }
+        List<Long> ids = postIds.stream().filter(Objects::nonNull).distinct().toList();
+        if (ids.isEmpty()) {
+            return result;
+        }
+        starRecordMapper.selectList(new LambdaQueryWrapper<StarRecord>()
+                        .eq(StarRecord::getUserId, userId)
+                        .in(StarRecord::getPostId, ids))
+                .forEach(r -> result.put(r.getPostId(), true));
+        return result;
     }
 
     private List<Long> getFanIds(Long userId) {
@@ -600,6 +709,7 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         // 批量读取点赞数与点赞状态（pipeline 一次往返）
         Map<Long, Integer> likeCounts = dataCacheUtil.getLikeCounts(ids);
         Map<Long, Boolean> likedMap = dataCacheUtil.isLikedBatch(userId, ids);
+        Map<Long, Boolean> starredMap = getStarredMap(userId, ids);
 
         List<Long> userIds = posts.stream()
                 .filter(Post::getEnabled)
@@ -618,13 +728,20 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
             if (post == null || !post.getEnabled()) {
                 continue;
             }
+            // 私密帖子不进入任何信息流
+            if (Boolean.TRUE.equals(post.getIsPrivate())) {
+                continue;
+            }
             PostVO postVO = BeanUtil.copyProperties(post, PostVO.class);
             User author = userMap.get(post.getUserId());
             if (author != null) {
                 postVO.setUsername(author.getUsername());
+                postVO.setNickname(author.getNickname());
             }
             postVO.setLikeCount(likeCounts.getOrDefault(id, 0));
             postVO.setLiked(userId == null ? false : likedMap.getOrDefault(id, false));
+            postVO.setStarCount(post.getStarCount() == null ? 0 : post.getStarCount());
+            postVO.setStarred(userId == null ? false : starredMap.getOrDefault(id, false));
             postVOS.add(postVO);
         }
         int newOffset = 1;

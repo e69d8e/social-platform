@@ -20,6 +20,7 @@ public class UserVO implements Serializable {
     private Long id;
     private String username;
     private String avatar;
+    private String backgroundUrl;
     private String bio;
     private Integer gender;
     private Integer authorityId;
