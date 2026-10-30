@@ -37,6 +37,13 @@ public class CommentController {
         return commentService.likeComment(commentId);
     }
 
+    @DeleteMapping("/{id}")
+    @Operation(summary = "删除评论", description = "删除自己发表的评论；管理员/审核员可删除任意评论，一级评论的回复会一并删除")
+    public Result deleteComment(
+            @Parameter(description = "评论ID") @PathVariable Long id) {
+        return commentService.deleteComment(id);
+    }
+
     @GetMapping("/{id}")
     @Operation(summary = "获取评论", description = "获取帖子的一级评论列表（游标分页）")
     public Result getComments(

@@ -44,7 +44,16 @@ public class CaptchaServiceImpl implements ICaptchaService {
                 String.valueOf(image.x()),
                 CacheTtl.CAPTCHA_SECONDS,
                 TimeUnit.SECONDS);
-        return Result.ok(new SlideCaptchaVO(captchaId, image.bgImage(), image.blockImage(), image.y()));
+        return Result.ok(new SlideCaptchaVO(
+                captchaId,
+                image.bgImage(),
+                image.blockImage(),
+                image.y(),
+                image.blockWidth(),
+                image.blockHeight(),
+                image.blockOffsetX(),
+                image.blockOffsetY(),
+                image.size()));
     }
 
     @Override

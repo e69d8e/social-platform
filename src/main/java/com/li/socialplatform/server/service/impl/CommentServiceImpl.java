@@ -4,6 +4,7 @@ import cn.hutool.core.bean.BeanUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.li.socialplatform.common.constant.AuthorityConstant;
 import com.li.socialplatform.common.constant.KeyConstant;
 import com.li.socialplatform.common.constant.MessageConstant;
 import com.li.socialplatform.common.properties.SystemConstants;
@@ -108,7 +109,8 @@ public class CommentServiceImpl extends ServiceImpl<CommentMapper, Comment> impl
             objectScrollResult.setList(new ArrayList<>());
             objectScrollResult.setMinTime(System.currentTimeMillis());
             objectScrollResult.setOffset(0);
-            return Result.ok(objectScrollResult);
+            // 必须带上 total，否则前端会把默认的 0 当成真实总数，评论数徽标瞬间归零
+            return Result.ok(objectScrollResult, total);
         }
         // 解析id
         List<Long> commentIds = list.stream().map(commentId -> (Long) commentId).toList();
@@ -225,6 +227,41 @@ public class CommentServiceImpl extends ServiceImpl<CommentMapper, Comment> impl
         objectScrollResult.setMinTime(scores.getLast().longValue());
         objectScrollResult.setOffset(newOffset);
         return Result.ok(objectScrollResult, total);
+    }
+
+    @Transactional
+    @Override
+    public Result deleteComment(Long commentId) {
+        Long userId = userIdUtil.getUserId();
+        if (userId == null) {
+            return Result.error(MessageConstant.USER_NOT_LOGIN);
+        }
+        Comment comment = commentMapper.selectById(commentId);
+        if (comment == null) {
+            return Result.error("评论不存在");
+        }
+        User operator = userMapper.selectById(userId);
+        boolean isModerator = operator != null
+                && (AuthorityConstant.REVIEWER.equals(operator.getAuthorityId())
+                || AuthorityConstant.ADMIN.equals(operator.getAuthorityId()));
+        // 作者本人可删自己的评论，管理员/审核员可删任意评论
+        if (!Objects.equals(comment.getUserId(), userId) && !isModerator) {
+            return Result.error("无权删除该评论");
+        }
+        // 一级评论连带删除其下的回复，避免留下孤儿数据
+        List<Comment> targets = new ArrayList<>();
+        targets.add(comment);
+        if (comment.getParentId() == null) {
+            targets.addAll(commentMapper.selectList(new LambdaQueryWrapper<Comment>()
+                    .eq(Comment::getParentId, commentId)));
+        }
+        List<Long> targetIds = targets.stream().map(Comment::getId).toList();
+        commentLikeRecordMapper.delete(new LambdaQueryWrapper<CommentLikeRecord>()
+                .in(CommentLikeRecord::getCommentId, targetIds));
+        commentMapper.deleteBatchIds(targetIds);
+        // 一级评论计数与分页游标都在 ZSet 里，必须同步移除
+        redisUtil.zsets().remove(KeyConstant.COMMENT_KEY + comment.getPostId(), commentId);
+        return Result.ok(MessageConstant.DELETE_SUCCESS, "");
     }
 
     @Transactional

@@ -220,7 +220,9 @@ CREATE TABLE `search_history`
     `type`        TINYINT      NOT NULL COMMENT '搜索类型 (0: 帖子搜索, 1: 用户搜索)',
     `create_time` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '搜索时间',
     PRIMARY KEY (`id`),
-    KEY `idx_user_id` (`user_id`)
+    KEY `idx_user_id` (`user_id`),
+    -- 同一用户同一关键词只保留一条：并发写入靠唯一索引兜底（见 SearchHistoryServiceImpl）
+    UNIQUE KEY `uk_user_keyword` (`user_id`, `keyword`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4 COMMENT ='用户搜索记录表';
 

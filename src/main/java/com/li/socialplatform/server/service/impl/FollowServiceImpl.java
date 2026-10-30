@@ -169,7 +169,10 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
         } else {
             // 查询该用户粉丝列表是否为私密
             User u = userMapper.selectById(id);
-            if (u.getFansPrivate()) {
+            if (u == null) {
+                return Result.error(MessageConstant.USER_NOT_EXIST);
+            }
+            if (Boolean.TRUE.equals(u.getFansPrivate())) {
                 return Result.error(MessageConstant.USER_FANS_PRIVATE, List.of());
             }
         }
@@ -218,7 +221,10 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
         } else {
             // 查询该用户关注列表是否为私密
             User u = userMapper.selectById(id);
-            if (u.getFollowPrivate()) {
+            if (u == null) {
+                return Result.error(MessageConstant.USER_NOT_EXIST);
+            }
+            if (Boolean.TRUE.equals(u.getFollowPrivate())) {
                 return Result.error(MessageConstant.USER_FOLLOW_PRIVATE, List.of());
             }
         }

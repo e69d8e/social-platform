@@ -96,6 +96,18 @@ com.li.socialplatform
 
 Full DDL with seed data at `src/main/resources/social_platform.sql` (also auto-loaded on first MySQL container boot via `docker-entrypoint-initdb.d`). ER diagram in `docs/class-diagram.md`. Tables: user, authority, follow, category, post, comment, like_record, session, ban_record, user_interest_score, file, search_history, private_conversation, private_message, home_post, user_inbox.
 
+### Recent API contract changes (2026-11, see frontend `AUDIT.md`)
+
+- `DELETE /comment/{id}` — new: comment author, REVIEWER or ADMIN can delete; deleting a top-level comment also deletes its replies and their like records, and removes the ZSet cursor entry.
+- `GET|POST /user/sign` — now returns `SignInVO { days, signedToday }` instead of a bare number (frontend needs to know whether today is already signed).
+- `PUT /user/password` — now requires `oldPassword`; on success the refresh token is deleted and the current access token is blacklisted (all sessions must re-authenticate).
+- `GET /user/list/post` and `/user/list/user` — new `record` param (default `true`). Live-search suggestions must pass `record=false` or every keystroke pollutes search history.
+- `POST /post/migrate/home` — now `@PreAuthorize("hasRole('ADMIN')")`.
+- `GET /user/search-history*` — no longer in the `permitAll` whitelist.
+- Personalized feed (`PostServiceImpl.getPersonalizedPosts`) now excludes `isPrivate` posts; like/star reject other users' private posts.
+- `search_history` now has `UNIQUE KEY uk_user_keyword (user_id, keyword)`; `recordSearch` inserts first and falls back to an update on duplicate (the search page fires post+user search concurrently, which used to create duplicate rows). Existing databases need the index applied once:
+  `DELETE s1 FROM search_history s1 JOIN search_history s2 ON s1.user_id=s2.user_id AND s1.keyword=s2.keyword AND s1.id>s2.id; ALTER TABLE search_history ADD UNIQUE KEY uk_user_keyword (user_id, keyword);`
+
 ### API Docs
 
 Knife4j (OpenAPI) available at `http://localhost:8081/doc.html` when running.

@@ -1,6 +1,7 @@
 package com.li.socialplatform.server.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.li.socialplatform.common.utils.UserIdUtil;
@@ -10,11 +11,11 @@ import com.li.socialplatform.server.mapper.SearchHistoryMapper;
 import com.li.socialplatform.server.service.ISearchHistoryService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.List;
 
 @Service
 @RequiredArgsConstructor
@@ -24,32 +25,43 @@ public class SearchHistoryServiceImpl implements ISearchHistoryService {
     private final SearchHistoryMapper searchHistoryMapper;
     private final UserIdUtil userIdUtil;
 
+    /** 关键词入库长度上限（表字段 255，历史列表只需要可辨认的前缀） */
+    private static final int KEYWORD_MAX_LENGTH = 50;
+
     @Transactional
     @Override
     public void recordSearch(String keyword, Integer type) {
         Long userId = userIdUtil.getUserId();
-        if (userId == null) {
+        if (userId == null || keyword == null) {
             return;
         }
-        // 搜索历史不再区分帖子/用户：仅按关键词去重，type 仅记录最近一次搜索入口
-        List<SearchHistory> list = searchHistoryMapper.selectList(new LambdaQueryWrapper<SearchHistory>()
-                .eq(SearchHistory::getUserId, userId)
-                .eq(SearchHistory::getKeyword, keyword));
-        if (!list.isEmpty()) {
-            SearchHistory exist = list.get(0);
-            exist.setCreateTime(LocalDateTime.now());
-            exist.setType(type);
-            searchHistoryMapper.updateById(exist);
-            for (int i = 1; i < list.size(); i++) {
-                searchHistoryMapper.deleteById(list.get(i).getId());
-            }
-        } else {
+        String kw = keyword.trim();
+        if (kw.isEmpty()) {
+            return;
+        }
+        if (kw.length() > KEYWORD_MAX_LENGTH) {
+            kw = kw.substring(0, KEYWORD_MAX_LENGTH);
+        }
+
+        // 搜索历史按「用户 + 关键词」去重，type 只记录最近一次搜索入口。
+        // 之前的「先查再写」在并发下会产生重复行：搜索页会同时发起帖子/用户两个请求，
+        // 两个线程都查不到记录 → 都插入。这里改为直接插入，由唯一索引 uk_user_keyword
+        // 兜底并发（命中重复则退化为更新时间）。
+        try {
             SearchHistory sh = new SearchHistory();
             sh.setUserId(userId);
-            sh.setKeyword(keyword);
+            sh.setKeyword(kw);
             sh.setType(type);
             searchHistoryMapper.insert(sh);
+            return;
+        } catch (DuplicateKeyException ignored) {
+            // 已有同关键词记录，走更新分支
         }
+        searchHistoryMapper.update(null, new LambdaUpdateWrapper<SearchHistory>()
+                .eq(SearchHistory::getUserId, userId)
+                .eq(SearchHistory::getKeyword, kw)
+                .set(SearchHistory::getType, type)
+                .set(SearchHistory::getCreateTime, LocalDateTime.now()));
     }
 
     @Override

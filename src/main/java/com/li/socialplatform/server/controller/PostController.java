@@ -11,6 +11,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
@@ -94,7 +95,9 @@ public class PostController {
     }
 
     @PostMapping("/migrate/home")
-    @Operation(summary = "迁移帖子到首页帖子表", description = "读取Redis中的帖子列表，将数据迁移到home_post表")
+    @Operation(summary = "迁移帖子到首页帖子表", description = "读取Redis中的帖子列表，将数据迁移到home_post表（仅管理员）")
+    // 数据迁移属于运维操作，任何登录用户都能触发会带来数据被反复写库的风险
+    @PreAuthorize("hasRole('ADMIN')")
     public Result migratePostListToHomePost() {
         return postService.migratePostListToHomePost();
     }

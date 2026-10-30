@@ -18,6 +18,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.Objects;
+
 /**
  * @author e69d8e
  * @since 2025/12/9 21:30
@@ -41,6 +43,14 @@ public class LikeServiceImpl extends ServiceImpl<LikeMapper, LikeRecord> impleme
         // 使用缓存层读取（缓存未命中时自动从 DB 加载）
         boolean member = dataCacheUtil.isLiked(postId, userId);
         Post post = postMapper.selectById(postId);
+        if (post == null || !Boolean.TRUE.equals(post.getEnabled())) {
+            return Result.error(MessageConstant.POST_NOT_EXIST);
+        }
+        // 他人私密帖不可见，也就不能点赞
+        if (Boolean.TRUE.equals(post.getIsPrivate())
+                && !Objects.equals(userId, post.getUserId())) {
+            return Result.error(MessageConstant.POST_NOT_EXIST);
+        }
         Long increment;
         if (member) {
             // 点赞数-1

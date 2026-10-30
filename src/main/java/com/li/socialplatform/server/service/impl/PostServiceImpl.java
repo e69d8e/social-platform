@@ -175,9 +175,6 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         // 获取当前用户
         User loginUser = userMapper.selectOne(new LambdaQueryWrapper<User>().eq(User::getUsername, getCurrentUsername()));
         Long userId = userIdUtil.getUserId();
-        if (userId != null) {
-            userIntersetScoreUtil.changeScore(userId, post.getCategoryId(), 1);
-        }
         if (loginUser != null) {
             if (!post.getEnabled() && !AuthorityConstant.REVIEWER.equals(loginUser.getAuthorityId()) && !AuthorityConstant.ADMIN.equals(loginUser.getAuthorityId())) {
                 return Result.error(MessageConstant.POST_NOT_EXIST);
@@ -193,6 +190,11 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         if (Boolean.TRUE.equals(post.getIsPrivate())
                 && !Objects.equals(userId, post.getUserId()) && !isModerator) {
             return Result.error(MessageConstant.POST_NOT_EXIST);
+        }
+        // 只有确认「这篇帖子对当前访问者可见」之后才计入兴趣分，
+        // 否则私密/封禁帖也会污染推荐画像
+        if (userId != null && !Boolean.TRUE.equals(post.getIsPrivate())) {
+            userIntersetScoreUtil.changeScore(userId, post.getCategoryId(), 1);
         }
         User user = userMapper.selectById(post.getUserId());
         if (user == null) {
@@ -293,6 +295,9 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
                 .withQuery(Query.of(q -> q.functionScore(fs -> {
                     fs.query(fq -> fq.bool(b -> {
                         b.must(m -> m.term(t -> t.field("enabled").value(true)));
+                        // 私密帖子只属于作者本人：推荐流必须显式排除，
+                        // 否则别人的私密帖会出现在登录用户的首页（隐私泄漏）
+                        b.mustNot(mn -> mn.term(t -> t.field("isPrivate").value(true)));
                         for (Map.Entry<Integer, Integer> entry : interestScores.entrySet()) {
                             if (entry.getValue() > 0) {
                                 float boost = (float) entry.getValue() / maxScore;
@@ -551,8 +556,13 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         }
         String cover = post.getCover();
         if (cover != null && !cover.isEmpty()) {
-            // 删除封面图片
-            deleteFileUtil.deleteFile(cover.substring(systemConstants.baseUrl.length()));
+            // 删除封面图片：baseUrl 前缀可能因部署环境变化而不再匹配，
+            // 直接 substring 会切出非法对象名并删错文件，这里先判断前缀再裁剪
+            String baseUrl = systemConstants.baseUrl;
+            String coverPath = baseUrl != null && !baseUrl.isEmpty() && cover.startsWith(baseUrl)
+                    ? cover.substring(baseUrl.length())
+                    : cover;
+            deleteFileUtil.deleteFile(coverPath);
         }
         // 删除帖子点赞数据
         likeMapper.delete(new LambdaQueryWrapper<LikeRecord>().eq(LikeRecord::getPostId, id));

@@ -54,18 +54,15 @@ public class SecurityConfig {
                                                 "/user/profile/*", // 查询其他用户信息接口
                                                 "/follow/list/followee/{id}", // 其他用户关注列表接口
                                                 "/follow/list/{id}", // 其他用户粉丝列表接口
-                                                "/comment/post/{id}", // 获取一级评论
-                                                "/comment/post/{id}/{commentId}", // 获取二级评论
                                                 "/post/user/{id}", // 获取用户帖子列表
-//                                                "/upload/avatar", // 上传头像
-//                                                "/upload/post", // 上传帖子图片
-                                                "/user/list/post", // 获取用户帖子列表
+                                                "/user/list/post", // 搜索帖子（游客可搜）
+                                                "/user/list/user", // 搜索用户（游客可搜）
                                                 "/category", // 获取帖子分类
                                                 "/ws/**"
                                         ).permitAll() // 放行
+                                        // 注意：搜索历史属于个人数据，必须登录后访问，不能放进 permitAll
                                         .requestMatchers(HttpMethod.GET, "/post/{id}", "/post/list",
-                                                "/post/follow/list", "/post/user/{id}", "/comment/{id}",
-                                                "/user/list/post", "/user/list/user", "/user/search-history").permitAll()
+                                                "/post/follow/list", "/post/user/{id}", "/comment/{id}").permitAll()
                                         .requestMatchers(HttpMethod.POST, "/post/view/*").permitAll() // 放行记录浏览量
                                         .requestMatchers(HttpMethod.DELETE, "/post/{id}").authenticated()
                                         .requestMatchers(

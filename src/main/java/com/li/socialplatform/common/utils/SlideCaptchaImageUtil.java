@@ -9,6 +9,7 @@ import java.awt.RenderingHints;
 import java.awt.Shape;
 import java.awt.geom.Arc2D;
 import java.awt.geom.Path2D;
+import java.awt.geom.Rectangle2D;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -18,36 +19,79 @@ import java.util.concurrent.ThreadLocalRandom;
 /**
  * 滑块验证码图片生成器：缺口位置只在服务端，客户端拿到的是渲染好的图片。
  *
- * 几何参数必须与前端 src/components/SlideVerify.vue 保持一致，改动需两边同步：
- *  - w=310, h=155, l=42, r=10，L = l + 2r + 3 = 65
- *  - 缺口横向位置 x ∈ [75, 235]，即前端 minOffset = L+10、maxOffset = w-(L+10)
- *  - 拼图块纵向位置 y ∈ [10+2r, h-(L+10)] = [30, 80]
+ * <p>几何约定（两种图共用同一套参数，改动必须前后端同步）：</p>
+ * <ul>
+ *   <li>背景 310×155；拼图方形主体边长 {@code SIZE = 65}，圆弧半径 {@code r = 10}。</li>
+ *   <li>拼图块画布不再等于方形主体：形状四周有外凸/内凹圆弧，画布必须覆盖整个
+ *       包围盒，否则拼图块的右侧凸起与底部会被切掉（曾经就是 65×65 直接裁剪，
+ *       导致块与缺口对不上）。画布尺寸与方形主体的偏移量随响应一起下发。</li>
+ *   <li>缺口 x 的取值区间保证「整个缺口形状」落在背景图内，不会贴边被裁。</li>
+ * </ul>
+ *
+ * <p>前端 {@code SlideVerify.vue} 直接用 {@code blockWidth/blockHeight/blockOffsetX/blockOffsetY}
+ * 定位，不再自己推导尺寸。</p>
  */
 public final class SlideCaptchaImageUtil {
 
     public static final int WIDTH = 310;
     public static final int HEIGHT = 155;
-    /** 前端 L = l + r*2 + 3 */
-    private static final int L = 65;
-    /** 前端 r */
+
+    /** 拼图方形主体边长（对应前端老常量 l + r*2 + 3 中的主体部分） */
+    private static final int SIZE = 65;
+    /** 圆弧半径 */
     private static final int PIECE_R = 10;
+    /** 描边抗锯齿留白 */
+    private static final int EDGE_PAD = 3;
+
+    /** 方形左上角位于原点的标准形状，用于计算画布包围盒 */
+    private static final Shape UNIT_PATH = puzzlePath(0, 0);
+    private static final Rectangle2D UNIT_BOUNDS = UNIT_PATH.getBounds2D();
+
+    /** 方形左上角在拼图块画布内的偏移（左侧内凹圆弧需要留白） */
+    private static final int BLOCK_OFFSET_X =
+            (int) Math.ceil(-UNIT_BOUNDS.getMinX()) + EDGE_PAD;
+    /** 方形左上角在拼图块画布内的纵向偏移（顶部外凸圆弧需要留白） */
+    private static final int BLOCK_OFFSET_Y =
+            (int) Math.ceil(-UNIT_BOUNDS.getMinY()) + EDGE_PAD;
+    private static final int BLOCK_WIDTH =
+            (int) Math.ceil(UNIT_BOUNDS.getWidth()) + BLOCK_OFFSET_X + EDGE_PAD;
+    private static final int BLOCK_HEIGHT =
+            (int) Math.ceil(UNIT_BOUNDS.getHeight()) + BLOCK_OFFSET_Y + EDGE_PAD;
+
+    /** 缺口横向取值范围：左侧内凹圆弧最多外扩 ~3px，右侧凸起外扩 ~18px */
     private static final int X_MIN = 75;
-    private static final int X_MAX = 235;
+    private static final int X_MAX = WIDTH - (int) Math.ceil(UNIT_BOUNDS.getMaxX()) - 4;
     private static final int Y_MIN = 30;
-    private static final int Y_MAX = 80;
-    /** 与前端 draw() 的 rgba(255,255,255,0.7) 一致 */
-    private static final Color GAP_COLOR = new Color(255, 255, 255, 179);
+    private static final int Y_MAX = HEIGHT - SIZE - 10;
+
+    /** 缺口填充色（半透明白），与前端无缺口时的视觉层次一致 */
+    private static final Color GAP_FILL = new Color(255, 255, 255, 150);
+    private static final Color GAP_STROKE = new Color(255, 255, 255, 220);
+    /**
+     * 圆角连接：缺口上沿是「直线 → 内凹圆弧」的尖角，
+     * 默认的 miter 连接会在尖角处甩出 2~3px 的尖刺，
+     * 既难看又会让拼图块顶到画布边缘被切掉。
+     */
+    private static final BasicStroke OUTLINE =
+            new BasicStroke(2, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND);
 
     private SlideCaptchaImageUtil() {
     }
 
     /**
-     * @param x          缺口横向位置（即校验用的答案，不下发给客户端）
-     * @param y          拼图块纵向位置
-     * @param bgImage    带缺口背景图 PNG base64
-     * @param blockImage L×L 透明底拼图块 PNG base64
+     * @param x            缺口横向位置（即校验答案，不下发给客户端）
+     * @param y            缺口纵向位置
+     * @param bgImage      带缺口背景图 PNG base64
+     * @param blockImage   拼图块 PNG base64（透明底，尺寸为 blockWidth×blockHeight）
+     * @param blockWidth   拼图块画布宽
+     * @param blockHeight  拼图块画布高
+     * @param blockOffsetX 方形主体左边缘在画布内的 x
+     * @param blockOffsetY 方形主体上边缘在画布内的 y
+     * @param size         方形主体边长
      */
-    public record CaptchaImage(int x, int y, String bgImage, String blockImage) {
+    public record CaptchaImage(int x, int y, String bgImage, String blockImage,
+                               int blockWidth, int blockHeight,
+                               int blockOffsetX, int blockOffsetY, int size) {
     }
 
     public static CaptchaImage generate() {
@@ -55,48 +99,51 @@ public final class SlideCaptchaImageUtil {
         int x = rnd.nextInt(X_MIN, X_MAX + 1);
         int y = rnd.nextInt(Y_MIN, Y_MAX + 1);
 
+        // 1. 先在「干净背景」上把缺口像素抠出来，作为拼图块的内容；
+        //    顺序不能反：先画缺口再取块，块会被白色蒙层洗白，拼回去也对不上原图
         BufferedImage background = drawBackground();
-        // 主图画缺口：半透明白色填充 + 描边，对应前端 draw(ctx, x, y, l, r, "fill")
-        Graphics2D g = background.createGraphics();
-        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-        Shape gapPath = puzzlePath(x, y);
-        g.setColor(GAP_COLOR);
-        g.fill(gapPath);
-        g.setStroke(new BasicStroke(2));
-        g.draw(gapPath);
-        g.dispose();
-
-        // 拼图块：按前端 blockCtx 的 clip + getImageData 逻辑，把缺口区域裁剪到 L×L 透明画布
-        Shape piecePath = puzzlePath(0, PIECE_R * 2 + 1);
-        BufferedImage block = new BufferedImage(L, L, BufferedImage.TYPE_INT_ARGB);
+        BufferedImage block = new BufferedImage(BLOCK_WIDTH, BLOCK_HEIGHT, BufferedImage.TYPE_INT_ARGB);
         Graphics2D bg = block.createGraphics();
         bg.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        Shape piecePath = puzzlePath(BLOCK_OFFSET_X, BLOCK_OFFSET_Y);
         bg.setClip(piecePath);
-        bg.translate(-x, -(y - PIECE_R * 2 - 1));
+        bg.translate(BLOCK_OFFSET_X - x, BLOCK_OFFSET_Y - y);
         bg.drawImage(background, 0, 0, null);
-        bg.translate(x, y - PIECE_R * 2 - 1);
+        bg.translate(x - BLOCK_OFFSET_X, y - BLOCK_OFFSET_Y);
         bg.setClip(null);
-        bg.setColor(GAP_COLOR);
-        bg.setStroke(new BasicStroke(2));
+        bg.setColor(GAP_STROKE);
+        bg.setStroke(OUTLINE);
         bg.draw(piecePath);
         bg.dispose();
 
-        return new CaptchaImage(x, y, toBase64Png(background), toBase64Png(block));
+        // 2. 再在主图上挖缺口（半透明白填充 + 描边），提示用户目标位置
+        Graphics2D g = background.createGraphics();
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        Shape gapPath = puzzlePath(x, y);
+        g.setColor(GAP_FILL);
+        g.fill(gapPath);
+        g.setColor(GAP_STROKE);
+        g.setStroke(OUTLINE);
+        g.draw(gapPath);
+        g.dispose();
+
+        return new CaptchaImage(x, y, toBase64Png(background), toBase64Png(block),
+                BLOCK_WIDTH, BLOCK_HEIGHT, BLOCK_OFFSET_X, BLOCK_OFFSET_Y, SIZE);
     }
 
     /**
-     * 拼图路径，逐句对应前端 SlideVerify.vue 的 draw()：
-     * 方形主体 (x,y)-(x+l,y+l)，顶部/右侧外凸圆弧，左侧内收圆弧。
+     * 拼图路径，逐句对应前端滑动组件的历史绘制逻辑：
+     * 方形主体 (x,y)-(x+SIZE,y+SIZE)，顶部内凹圆弧、右侧外凸圆弧、左侧内凹圆弧。
      */
     private static Shape puzzlePath(double x, double y) {
         Path2D.Double p = new Path2D.Double();
         p.moveTo(x, y);
-        appendArc(p, x + L / 2.0, y - PIECE_R + 2, PIECE_R, 0.72 * Math.PI, 2.26 * Math.PI);
-        p.lineTo(x + L, y);
-        appendArc(p, x + L + PIECE_R - 2, y + L / 2.0, PIECE_R, 1.21 * Math.PI, 2.78 * Math.PI);
-        p.lineTo(x + L, y + L);
-        p.lineTo(x, y + L);
-        appendArc(p, x + PIECE_R - 2, y + L / 2.0, PIECE_R + 0.4, 2.76 * Math.PI, 1.24 * Math.PI);
+        appendArc(p, x + SIZE / 2.0, y - PIECE_R + 2, PIECE_R, 0.72 * Math.PI, 2.26 * Math.PI);
+        p.lineTo(x + SIZE, y);
+        appendArc(p, x + SIZE + PIECE_R - 2, y + SIZE / 2.0, PIECE_R, 1.21 * Math.PI, 2.78 * Math.PI);
+        p.lineTo(x + SIZE, y + SIZE);
+        p.lineTo(x, y + SIZE);
+        appendArc(p, x + PIECE_R - 2, y + SIZE / 2.0, PIECE_R + 0.4, 2.76 * Math.PI, 1.24 * Math.PI);
         p.lineTo(x, y);
         p.closePath();
         return p;

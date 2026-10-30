@@ -50,6 +50,11 @@ public class StarServiceImpl extends ServiceImpl<StarRecordMapper, StarRecord> i
         if (post == null || !Boolean.TRUE.equals(post.getEnabled())) {
             return Result.error(MessageConstant.POST_NOT_EXIST);
         }
+        // 他人私密帖对当前用户不可见，自然也不允许收藏（避免通过收藏接口探测私密帖存在性）
+        if (Boolean.TRUE.equals(post.getIsPrivate())
+                && !Objects.equals(userId, post.getUserId())) {
+            return Result.error(MessageConstant.POST_NOT_EXIST);
+        }
         StarRecord existing = starRecordMapper.selectOne(new LambdaQueryWrapper<StarRecord>()
                 .eq(StarRecord::getUserId, userId)
                 .eq(StarRecord::getPostId, postId));

@@ -18,6 +18,9 @@ public class UserDTO implements Serializable {
     private String username;
     private String password;
 
+    /** 修改密码时的原密码：用于校验操作者身份，避免令牌泄漏即可改密 */
+    private String oldPassword;
+
     @Size(max = 16, message = "昵称长度不能超过16")
     private String nickname;
     private String oldAvatar;

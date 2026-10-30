@@ -26,6 +26,7 @@ import com.li.socialplatform.pojo.entity.Post;
 import com.li.socialplatform.pojo.entity.Result;
 import com.li.socialplatform.pojo.entity.User;
 import com.li.socialplatform.pojo.vo.PostVO;
+import com.li.socialplatform.pojo.vo.SignInVO;
 import com.li.socialplatform.pojo.vo.UserVO;
 import com.li.socialplatform.server.service.ICaptchaService;
 import com.li.socialplatform.server.service.ISearchHistoryService;
@@ -308,13 +309,28 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
     }
 
     @Override
-    public Result updatePassword(UserDTO userDTO) {
+    public Result updatePassword(UserDTO userDTO, HttpServletRequest request) {
         User user = userMapper.selectOne(new LambdaQueryWrapper<User>().eq(User::getUsername, getCurrentUsername()));
         if (user == null) {
             return Result.error(MessageConstant.USER_NOT_FOUND);
         }
-        user.setPassword(encodePassword(userDTO.getPassword()));
+        // 改密必须校验原密码：否则任何拿到 accessToken 的人都能直接改掉密码并锁死账号
+        if (StringUtils.isEmpty(userDTO.getOldPassword())) {
+            return Result.error(MessageConstant.OLD_PASSWORD_REQUIRED);
+        }
+        if (!passwordEncoder.matches(userDTO.getOldPassword(), user.getPassword())) {
+            return Result.error(MessageConstant.OLD_PASSWORD_ERROR);
+        }
+        String newPassword = userDTO.getPassword();
+        if (StringUtils.isEmpty(newPassword) || !newPassword.matches("^[a-zA-Z0-9_-]{6,16}$")) {
+            return Result.error(MessageConstant.PASSWORD_FORMAT_ERROR);
+        }
+        user.setPassword(encodePassword(newPassword));
         userMapper.updateById(user);
+        // 改密后强制所有会话失效：清 refreshToken 并把当前 accessToken 拉黑，
+        // 前端据此跳回登录页重新认证
+        tokenCacheUtil.deleteRefreshToken(user.getUsername());
+        blacklistAccessToken(request);
         return Result.ok(MessageConstant.UPDATE_SUCCESS, "");
     }
 
@@ -324,12 +340,14 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         String key = KeyConstant.SIGN_IN_KEY + getCurrentUsername() + now.format(DateTimeFormatter.ofPattern("yyyyMM"));
         // 设置签到
         redisUtil.values().setBit(key, now.getDayOfMonth() - 1, true);
-        return Result.ok(calculateConsecutiveDays(now));
+        // 重复签到是幂等的：返回的仍是「连续天数 + 今天已签到」，前端据此把按钮置为已签到
+        return Result.ok(new SignInVO(calculateConsecutiveDays(now), true));
     }
 
     @Override
     public Result signInCount() {
-        return Result.ok(calculateConsecutiveDays(LocalDateTime.now()));
+        LocalDateTime now = LocalDateTime.now();
+        return Result.ok(new SignInVO(calculateConsecutiveDays(now), isSignedOn(now)));
     }
 
     /** 连续签到回溯上限（天），防御异常数据导致死循环 */
@@ -363,7 +381,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
     }
 
     @Override
-    public Result listPost(String keyword, Integer pageNum, Integer pageSize, Integer categoryId) {
+    public Result listPost(String keyword, Integer pageNum, Integer pageSize, Integer categoryId, boolean record) {
         Sort sort = Sort.by(Sort.Direction.DESC, "likeCount");
         Pageable pageable = PageRequest.of(pageNum - 1, pageSize, sort);
         List<Post> posts;
@@ -390,7 +408,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
                     .build();
             total = elasticsearchOperations.count(countQuery, Post.class);
         }
-        if (!StringUtils.isEmpty(keyword)) {
+        if (record && !StringUtils.isEmpty(keyword)) {
             searchHistoryService.recordSearch(keyword, 0);
         }
         if (posts.isEmpty()) {
@@ -427,7 +445,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
     }
 
     @Override
-    public Result listUser(String keyword, Integer pageNum, Integer pageSize) {
+    public Result listUser(String keyword, Integer pageNum, Integer pageSize, boolean record) {
         Sort sort = Sort.by(Sort.Direction.DESC, "fansCount");
         Pageable pageable = PageRequest.of(pageNum - 1, pageSize, sort);
         List<User> users = userElasticsearchRepository.findByUsernameOrNickname(keyword, keyword, pageable);
@@ -441,7 +459,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
                     .build();
             total = elasticsearchOperations.count(countQuery, User.class);
         }
-        if (!StringUtils.isEmpty(keyword)) {
+        if (record && !StringUtils.isEmpty(keyword)) {
             searchHistoryService.recordSearch(keyword, 1);
         }
         if (users.isEmpty()) {

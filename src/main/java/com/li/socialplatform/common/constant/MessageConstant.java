@@ -9,6 +9,8 @@ public class MessageConstant {
     public static final String USERNAME_ALREADY_EXISTS = "该用户已经存在";
     public static final String USERNAME_FORMAT_ERROR = "用户名格式错误";
     public static final String PASSWORD_FORMAT_ERROR = "密码格式错误";
+    public static final String OLD_PASSWORD_REQUIRED = "请输入原密码";
+    public static final String OLD_PASSWORD_ERROR = "原密码不正确";
     public static final String USER_PASSWORD_ERROR = "密码错误";
     public static final String LOGIN_FAILED = "用户名或密码错误";
 

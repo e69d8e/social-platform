@@ -19,15 +19,26 @@ public interface IUserService extends IService<User> {
 
     Result updateUserProfile(UserDTO userDTO);
 
-    Result updatePassword(UserDTO userDTO);
+    Result updatePassword(UserDTO userDTO, HttpServletRequest request);
 
     Result signIn();
 
     Result signInCount();
 
-    Result listPost(String keyword, Integer pageNum, Integer pageSize, Integer categoryId);
+    /**
+     * 搜索帖子
+     *
+     * @param record 是否把关键词写入搜索历史。顶栏输入框的实时联想必须传 false，
+     *               否则每敲一个字都会产生一条历史记录（历史被无意义前缀刷屏）。
+     */
+    Result listPost(String keyword, Integer pageNum, Integer pageSize, Integer categoryId, boolean record);
 
-    Result listUser(String keyword, Integer pageNum, Integer pageSize);
+    /**
+     * 搜索用户
+     *
+     * @param record 是否把关键词写入搜索历史（同 {@link #listPost}）
+     */
+    Result listUser(String keyword, Integer pageNum, Integer pageSize, boolean record);
 
     Result logout(HttpServletRequest request);
 }
