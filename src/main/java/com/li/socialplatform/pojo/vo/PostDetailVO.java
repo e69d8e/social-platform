@@ -7,6 +7,7 @@ import lombok.NoArgsConstructor;
 
 import java.io.Serializable;
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * @author e69d8e
@@ -21,13 +22,16 @@ public class PostDetailVO implements Serializable {
     private String cover;
     private String title;
     private String content;
+    private Integer categoryId;
     private String category;
+    private List<TagVO> tags;
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime createTime;
     private Boolean liked;
     private Integer likeCount;
     private Boolean starred;
     private Integer starCount;
+    private Integer commentCount;
     private Boolean isPrivate;
     @JsonFormat(shape = JsonFormat.Shape.STRING)
     private Long userId;

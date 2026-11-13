@@ -2,13 +2,16 @@ package com.li.socialplatform.server.service.impl;
 
 import cn.hutool.core.bean.BeanUtil;
 import co.elastic.clients.elasticsearch._types.FieldValue;
+import co.elastic.clients.elasticsearch._types.query_dsl.Query;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.li.socialplatform.common.constant.KeyConstant;
 import com.li.socialplatform.common.constant.MessageConstant;
 import com.li.socialplatform.common.properties.SystemConstants;
+import com.li.socialplatform.common.utils.BlacklistUtil;
 import com.li.socialplatform.common.utils.DataCacheUtil;
 import com.li.socialplatform.common.utils.DeleteFileUtil;
+import com.li.socialplatform.common.utils.EsQueryUtil;
 import com.li.socialplatform.common.utils.JwtUtils;
 import com.li.socialplatform.common.utils.RedisUtil;
 import com.li.socialplatform.common.utils.TokenCacheUtil;
@@ -17,7 +20,9 @@ import com.li.socialplatform.pojo.dto.LoginDTO;
 import com.li.socialplatform.pojo.dto.RefreshDTO;
 import com.li.socialplatform.pojo.entity.File;
 import com.li.socialplatform.pojo.vo.TokenVO;
+import com.li.socialplatform.pojo.entity.StarRecord;
 import com.li.socialplatform.server.mapper.FileMapper;
+import com.li.socialplatform.server.mapper.StarRecordMapper;
 import com.li.socialplatform.server.repository.PostElasticsearchRepository;
 import com.li.socialplatform.server.repository.UserElasticsearchRepository;
 import com.li.socialplatform.server.mapper.UserMapper;
@@ -31,6 +36,7 @@ import com.li.socialplatform.pojo.vo.UserVO;
 import com.li.socialplatform.server.service.ICaptchaService;
 import com.li.socialplatform.server.service.ISearchHistoryService;
 import com.li.socialplatform.server.service.IUserService;
+import com.li.socialplatform.server.service.helper.PostHydrationHelper;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.ExpiredJwtException;
 import io.jsonwebtoken.JwtException;
@@ -85,6 +91,9 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
     private final ISearchHistoryService searchHistoryService;
     private final PasswordEncoder passwordEncoder;
     private final ICaptchaService captchaService;
+    private final BlacklistUtil blacklistUtil;
+    private final StarRecordMapper starRecordMapper;
+    private final PostHydrationHelper postHydrationHelper;
 
     @Value("${jwt.access-expire}")
     private Long accessExpire;
@@ -249,6 +258,13 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
         UserVO userVO = BeanUtil.copyProperties(user, UserVO.class);
         userVO.setFansCount(dataCacheUtil.getFollowerCount(id));
         userVO.setFollowed(followed);
+        // 黑名单：拉黑者需要「你已拉黑 TA」横幅与解除入口；被拉黑方不下发任何拉黑信号
+        Long viewerId = userIdUtil.getUserId();
+        userVO.setBlocked(blacklistUtil.isBlockedByMe(viewerId, id));
+        if (blacklistUtil.isHidden(viewerId, id)) {
+            // 互相不可见时关注关系一定不存在（拉黑时会自动解绑），显式归零避免脏缓存直出
+            userVO.setFollowed(false);
+        }
         return Result.ok(userVO);
     }
 
@@ -382,65 +398,61 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
 
     @Override
     public Result listPost(String keyword, Integer pageNum, Integer pageSize, Integer categoryId, boolean record) {
+        return listPost(keyword, pageNum, pageSize, categoryId, null, record);
+    }
+
+    @Override
+    public Result listPost(String keyword, Integer pageNum, Integer pageSize, Integer categoryId, Long tagId, boolean record) {
         Sort sort = Sort.by(Sort.Direction.DESC, "likeCount");
         Pageable pageable = PageRequest.of(pageNum - 1, pageSize, sort);
-        List<Post> posts;
-        Long total;
-        // 所有搜索入口都只返回未封禁（enabled=true）的帖子，与推荐流 getScrollResult 行为一致
-        if (StringUtils.isEmpty(keyword)) {
-            if (categoryId == null) {
-                posts = postElasticsearchRepository.findByEnabledTrue(pageable);
-                total = postElasticsearchRepository.countByEnabledTrue();
-            } else {
-                posts = postElasticsearchRepository.findByCategoryIdAndEnabledTrue(categoryId, pageable);
-                total = postElasticsearchRepository.countByCategoryIdAndEnabledTrue(categoryId);
-            }
-        } else {
-            posts = postElasticsearchRepository.searchByKeywordAndEnabled(keyword, pageable);
-            // count 与仓库 @Query 搜索同条件；不用派生 count，Or 混合 And 时方法名拆分语义易错
-            NativeQuery countQuery = NativeQuery.builder()
-                    .withQuery(q -> q.bool(b -> b
-                            .should(s -> s.match(m -> m.field("title").query(keyword)))
-                            .should(s -> s.match(m -> m.field("content").query(keyword)))
-                            .minimumShouldMatch("1")
-                            .filter(f -> f.term(t -> t.field("enabled").value(FieldValue.of(true))))
-                            .mustNot(mn -> mn.term(t -> t.field("isPrivate").value(FieldValue.of(true))))))
-                    .build();
-            total = elasticsearchOperations.count(countQuery, Post.class);
-        }
+        Long userId = userIdUtil.getUserId();
+
+        // 黑名单作者：与本人互相不可见。ES 里 userId 映射为 Keyword（存字符串），
+        // 因此统一用 NativeQuery 构造，避免 @Query 注解版本与排除条件各写一份。
+        Set<Long> hidden = blacklistUtil.hiddenUserIds(userId);
+
+        NativeQuery query = NativeQuery.builder()
+                .withQuery(q -> q.bool(b -> {
+                    b.filter(f -> f.term(t -> t.field("enabled").value(FieldValue.of(true))));
+                    b.mustNot(mn -> mn.term(t -> t.field("isPrivate").value(FieldValue.of(true))));
+                    if (!StringUtils.isEmpty(keyword)) {
+                        b.should(sh -> sh.match(m -> m.field("title").query(keyword).boost(2.5f)));
+                        b.should(sh -> sh.match(m -> m.field("tagNames").query(keyword).boost(2.0f)));
+                        b.should(sh -> sh.match(m -> m.field("content").query(keyword)));
+                        b.minimumShouldMatch("1");
+                    }
+                    if (categoryId != null) {
+                        b.filter(f -> f.term(t -> t.field("categoryId").value(FieldValue.of(String.valueOf(categoryId)))));
+                    }
+                    if (tagId != null) {
+                        b.filter(f -> f.term(t -> t.field("tagIds").value(FieldValue.of(String.valueOf(tagId)))));
+                    }
+                    Query hiddenAuthors = EsQueryUtil.excludeKeywordField("userId", hidden);
+                    if (hiddenAuthors != null) {
+                        b.mustNot(hiddenAuthors);
+                    }
+                    return b;
+                }))
+                .withPageable(pageable)
+                .withSort(sort)
+                .build();
+
+        NativeQuery countQuery = NativeQuery.builder()
+                .withQuery(query.getQuery())
+                .build();
+
+        List<Post> posts = elasticsearchOperations.search(query, Post.class).stream()
+                .map(hit -> hit.getContent())
+                .toList();
+        long total = elasticsearchOperations.count(countQuery, Post.class);
+
         if (record && !StringUtils.isEmpty(keyword)) {
             searchHistoryService.recordSearch(keyword, 0);
         }
         if (posts.isEmpty()) {
             return Result.ok(List.of(), 0L);
         }
-        List<Long> userIds = posts.stream()
-                .map(Post::getUserId)
-                .filter(Objects::nonNull)
-                .distinct()
-                .toList();
-        Map<Long, User> userMap = new HashMap<>();
-        if (!userIds.isEmpty()) {
-            userMapper.selectBatchIds(userIds).forEach(u -> userMap.put(u.getId(), u));
-        }
-
-        List<PostVO> postVOS = new ArrayList<>();
-        Long userId = userIdUtil.getUserId();
-        // 批量读取点赞数与点赞状态（pipeline 一次往返）
-        List<Long> postIds = posts.stream().map(Post::getId).toList();
-        Map<Long, Integer> likeCounts = dataCacheUtil.getLikeCounts(postIds);
-        Map<Long, Boolean> likedMap = dataCacheUtil.isLikedBatch(userId, postIds);
-        for (Post post : posts) {
-            PostVO postVO = BeanUtil.copyProperties(post, PostVO.class);
-            User author = userMap.get(post.getUserId());
-            if (author != null) {
-                postVO.setUsername(author.getUsername());
-                postVO.setNickname(author.getNickname());
-            }
-            postVO.setLiked(likedMap.getOrDefault(post.getId(), false));
-            postVO.setLikeCount(likeCounts.getOrDefault(post.getId(), 0));
-            postVOS.add(postVO);
-        }
+        List<PostVO> postVOS = postHydrationHelper.hydrate(posts, userId, true, null);
         return Result.ok(postVOS, total);
     }
 
@@ -448,24 +460,34 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements IU
     public Result listUser(String keyword, Integer pageNum, Integer pageSize, boolean record) {
         Sort sort = Sort.by(Sort.Direction.DESC, "fansCount");
         Pageable pageable = PageRequest.of(pageNum - 1, pageSize, sort);
-        List<User> users = userElasticsearchRepository.findByUsernameOrNickname(keyword, keyword, pageable);
-        // 使用 ElasticsearchOperations 统一 count 查询（与 find 使用相同的 edge_ngram 查询 + enabled 过滤）
-        long total = 0;
-        if (!users.isEmpty()) {
-            NativeQuery countQuery = NativeQuery.builder()
-                    .withQuery(q -> q.bool(b -> b
-                            .must(m -> m.multiMatch(mm -> mm.fields("username.edge", "nickname.edge").query(keyword)))
-                            .filter(f -> f.term(t -> t.field("enabled").value(FieldValue.of(true))))))
-                    .build();
-            total = elasticsearchOperations.count(countQuery, User.class);
-        }
+        Long currentUserId = userIdUtil.getUserId();
+        // 黑名单用户：与本人互相不可见，不参与用户搜索
+        Set<Long> hidden = blacklistUtil.hiddenUserIds(currentUserId);
+        NativeQuery userQuery = NativeQuery.builder()
+                .withQuery(q -> q.bool(b -> {
+                    b.must(m -> m.multiMatch(mm -> mm.fields("username.edge", "nickname.edge").query(keyword)));
+                    b.filter(f -> f.term(t -> t.field("enabled").value(FieldValue.of(true))));
+                    Query hiddenUsers = EsQueryUtil.excludeKeywordField("id", hidden);
+                    if (hiddenUsers != null) {
+                        b.mustNot(hiddenUsers);
+                    }
+                    return b;
+                }))
+                .withPageable(pageable)
+                .withSort(sort)
+                .build();
+        List<User> users = elasticsearchOperations.search(userQuery, User.class).stream()
+                .map(hit -> hit.getContent())
+                .toList();
+        // count 与 find 使用完全同一个 query 对象，避免两边条件漂移
+        long total = elasticsearchOperations.count(
+                NativeQuery.builder().withQuery(userQuery.getQuery()).build(), User.class);
         if (record && !StringUtils.isEmpty(keyword)) {
             searchHistoryService.recordSearch(keyword, 1);
         }
         if (users.isEmpty()) {
             return Result.ok(List.of(), 0L);
         }
-        Long currentUserId = userIdUtil.getUserId();
         List<Long> resultUserIds = users.stream().map(User::getId).toList();
         // 批量读取粉丝数与关注状态（pipeline 一次往返）
         Map<Long, Integer> fansCounts = dataCacheUtil.getFollowerCounts(resultUserIds);

@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.li.socialplatform.common.constant.MessageConstant;
+import com.li.socialplatform.common.utils.BlacklistUtil;
 import com.li.socialplatform.common.utils.UserIdUtil;
 import com.li.socialplatform.pojo.dto.SendMessageDTO;
 import com.li.socialplatform.pojo.entity.*;
@@ -39,6 +40,7 @@ public class PrivateMessageServiceImpl extends ServiceImpl<PrivateMessageMapper,
     private final UserMapper userMapper;
     private final UserIdUtil userIdUtil;
     private final SimpMessagingTemplate messagingTemplate;
+    private final BlacklistUtil blacklistUtil;
 
     @Transactional
     @Override
@@ -64,6 +66,10 @@ public class PrivateMessageServiceImpl extends ServiceImpl<PrivateMessageMapper,
         User receiver = userMapper.selectById(dto.getReceiverId());
         if (receiver == null) {
             return Result.error(MessageConstant.RECEIVER_NOT_EXIST);
+        }
+        // 黑名单（任一方向）都禁止发送：拉黑后双向不可私信
+        if (blacklistUtil.isHidden(userId, dto.getReceiverId())) {
+            return Result.error(MessageConstant.MESSAGE_REJECTED);
         }
         // 归一化用户对
         Long userAId = Math.min(userId, dto.getReceiverId());
@@ -122,6 +128,35 @@ public class PrivateMessageServiceImpl extends ServiceImpl<PrivateMessageMapper,
     }
 
     @Override
+    public Result getConversation(Long conversationId) {
+        Long userId = userIdUtil.getUserId();
+        PrivateConversation conversation = privateConversationMapper.selectById(conversationId);
+        if (conversation == null) {
+            return Result.error(MessageConstant.CONVERSATION_NOT_EXIST);
+        }
+        if (!userId.equals(conversation.getUserAId()) && !userId.equals(conversation.getUserBId())) {
+            return Result.error(MessageConstant.NOT_CONVERSATION_PARTICIPANT);
+        }
+        Long otherUserId = userId.equals(conversation.getUserAId())
+                ? conversation.getUserBId() : conversation.getUserAId();
+        ConversationVO vo = new ConversationVO();
+        vo.setConversationId(conversation.getId());
+        vo.setOtherUserId(otherUserId);
+        vo.setUnreadCount(userId.equals(conversation.getUserAId())
+                ? conversation.getUnreadA() : conversation.getUnreadB());
+        vo.setLastMessage(conversation.getLastMessage());
+        vo.setLastMessageTime(conversation.getLastMessageTime());
+        // canSend 必须在服务端判定：被拉黑方不应通过接口返回值反推对方是否拉黑了自己（这里只给结果不给原因）
+        vo.setCanSend(!blacklistUtil.isHidden(userId, otherUserId));
+        User other = userMapper.selectById(otherUserId);
+        if (other != null) {
+            vo.setOtherUserNickname(other.getNickname());
+            vo.setOtherUserAvatar(other.getAvatar());
+        }
+        return Result.ok(vo);
+    }
+
+    @Override
     public Result getConversationList(Integer pageNum, Integer pageSize) {
         Long userId = userIdUtil.getUserId();
         // 查询当前用户参与的会话，按最后消息时间倒序
@@ -144,6 +179,8 @@ public class PrivateMessageServiceImpl extends ServiceImpl<PrivateMessageMapper,
         Map<Long, User> userMap = new HashMap<>();
         userMapper.selectBatchIds(otherUserIds).forEach(u -> userMap.put(u.getId(), u));
 
+        // 黑名单关系下会话保留（可回看历史），但禁止继续发送
+        Set<Long> hidden = blacklistUtil.hiddenUserIds(userId);
         List<ConversationVO> voList = records.stream().map(conv -> {
             ConversationVO vo = new ConversationVO();
             vo.setConversationId(conv.getId());
@@ -159,6 +196,7 @@ public class PrivateMessageServiceImpl extends ServiceImpl<PrivateMessageMapper,
             }
             vo.setOtherUserId(otherUserId);
             vo.setUnreadCount(unreadCount);
+            vo.setCanSend(!hidden.contains(otherUserId));
             vo.setLastMessage(conv.getLastMessage());
             vo.setLastMessageTime(conv.getLastMessageTime());
             // 获取对方用户信息

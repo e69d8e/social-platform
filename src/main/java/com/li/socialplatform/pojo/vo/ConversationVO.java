@@ -35,4 +35,6 @@ public class ConversationVO implements Serializable {
     private LocalDateTime lastMessageTime;
     @Schema(description = "当前用户在该会话的未读消息数")
     private Integer unreadCount;
+    @Schema(description = "是否可以继续发送消息（任一方向拉黑即为 false，前端据此禁用输入框）")
+    private Boolean canSend;
 }

@@ -12,6 +12,10 @@ public interface IPostService extends IService<Post> {
 
     Result listPosts(Long lastId, Integer offset);
 
+    Result listPosts(Long lastId, Integer offset, String mode, Boolean refresh, Long seed, String visitorId);
+
+    Result listPostsByTag(Long tagId, String tagName, Integer pageNum, Integer pageSize);
+
     Result listFollowPosts(Long lastId, Integer offset);
 
     Result userListPosts(Long id, Integer pageNum, Integer pageSize);

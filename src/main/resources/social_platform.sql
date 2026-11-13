@@ -76,34 +76,53 @@ CREATE TABLE if not exists `follow`
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4 COMMENT ='关注关系表';
 
+# 用户黑名单（用户级拉黑：双向互不可见 + 互不可私信，区别于管理员的 ban_record）
+CREATE TABLE IF NOT EXISTS `user_blacklist`
+(
+    `id`             BIGINT   NOT NULL AUTO_INCREMENT COMMENT '黑名单记录ID',
+    `user_id`        BIGINT   NOT NULL COMMENT '拉黑发起者ID',
+    `blocked_user_id` BIGINT  NOT NULL COMMENT '被拉黑用户ID',
+    `create_time`    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '拉黑时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_user_blocked` (`user_id`, `blocked_user_id`),
+    KEY `idx_blocked_user` (`blocked_user_id`)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4 COMMENT ='用户黑名单表';
+
 drop table if exists `category`;
 # 分类表
 CREATE TABLE if not exists `category`
 (
-    `id`   Int         NOT NULL AUTO_INCREMENT COMMENT '分类ID',
-    `name` VARCHAR(64) NOT NULL COMMENT '分类名称',
-    PRIMARY KEY (`id`)
+    `id`          INT          NOT NULL AUTO_INCREMENT COMMENT '分类ID',
+    `name`        VARCHAR(64)  NOT NULL COMMENT '分类名称',
+    `description` VARCHAR(200) NOT NULL DEFAULT '' COMMENT '分类简介',
+    `icon`        VARCHAR(32)  NULL COMMENT '分类图标/Emoji',
+    `color`       VARCHAR(16)  NULL COMMENT '分类主题色 HEX',
+    `sort_order`  INT          NOT NULL DEFAULT 100 COMMENT '排序权重（越小越靠前）',
+    `enabled`     TINYINT(1)   NOT NULL DEFAULT 1 COMMENT '是否启用 (1启用, 0禁用)',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_category_name` (`name`)
 );
-insert into `category` (`id`, `name`)
-values (1, '其他');
-insert into `category` (`id`, `name`)
-values (2, '摄影');
-insert into `category` (`id`, `name`)
-values (3, 'AI');
-insert into `category` (`id`, `name`)
-values (4, '科技');
-insert into `category` (`id`, `name`)
-values (5, '数码');
-insert into `category` (`id`, `name`)
-values (6, '经济');
-insert into `category` (`id`, `name`)
-values (7, '教程');
-insert into `category` (`id`, `name`)
-values (8, '音乐');
-insert into `category` (`id`, `name`)
-values (9, '历史');
-insert into `category` (`id`, `name`)
-values (11, '游戏');
+insert into `category` (`id`, `name`, `description`, `icon`, `color`, `sort_order`, `enabled`)
+values (1, '其他', '生活日常、灵感随笔与综合交流', '✨', '#8C7D72', 999, 1);
+insert into `category` (`id`, `name`, `description`, `icon`, `color`, `sort_order`, `enabled`)
+values (2, '摄影', '光影构图、旅拍扫街与器材心得', '📷', '#D97757', 10, 1);
+insert into `category` (`id`, `name`, `description`, `icon`, `color`, `sort_order`, `enabled`)
+values (3, 'AI', '大模型、AI 工具、提示词与前沿探索', '🤖', '#3A6F85', 20, 1);
+insert into `category` (`id`, `name`, `description`, `icon`, `color`, `sort_order`, `enabled`)
+values (4, '科技', '工程架构、技术趋势与科学前沿', '🔬', '#2F6F58', 30, 1);
+insert into `category` (`id`, `name`, `description`, `icon`, `color`, `sort_order`, `enabled`)
+values (5, '数码', '手机电脑、外设测评与效率装备', '💻', '#C75E5E', 40, 1);
+insert into `category` (`id`, `name`, `description`, `icon`, `color`, `sort_order`, `enabled`)
+values (6, '经济', '宏观产业、理财科普与投资思考', '📈', '#B9842E', 80, 1);
+insert into `category` (`id`, `name`, `description`, `icon`, `color`, `sort_order`, `enabled`)
+values (7, '教程', '实战指南、开发笔记与避坑经验', '📘', '#2E7466', 50, 1);
+insert into `category` (`id`, `name`, `description`, `icon`, `color`, `sort_order`, `enabled`)
+values (8, '音乐', '无损音质、黑胶唱盘与乐器弹唱', '🎵', '#A95A52', 70, 1);
+insert into `category` (`id`, `name`, `description`, `icon`, `color`, `sort_order`, `enabled`)
+values (9, '历史', '人文史话、古今风貌与文明交融', '🏛️', '#7E6050', 90, 1);
+insert into `category` (`id`, `name`, `description`, `icon`, `color`, `sort_order`, `enabled`)
+values (11, '游戏', '独立佳作、3A 大作、掌机与游戏设计', '🎮', '#567085', 60, 1);
 
 drop table if exists `post`;
 # 帖子表
@@ -118,11 +137,13 @@ CREATE TABLE if not exists `post`
     `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '发布时间',
     `enabled`     TINYINT(1)        DEFAULT 1 COMMENT '是否被封禁',
     `is_private`  TINYINT(1)        DEFAULT 0 COMMENT '是否私密（0: 公开, 1: 私密仅自己可见）',
-    `like_count`  INT               DEFAULT 0,
-    `star_count`  INT               DEFAULT 0 COMMENT '收藏数',
-    `view_count`  INT               DEFAULT 0,
+    `like_count`    INT               DEFAULT 0,
+    `star_count`    INT               DEFAULT 0 COMMENT '收藏数',
+    `comment_count` INT      NOT NULL DEFAULT 0 COMMENT '评论数',
+    `view_count`    INT               DEFAULT 0,
     PRIMARY KEY (`id`),
-    KEY `idx_user_time` (`user_id`, `create_time` DESC)
+    KEY `idx_user_time` (`user_id`, `create_time` DESC),
+    KEY `idx_category_enabled` (`category_id`, `enabled`, `is_private`, `create_time` DESC)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4 COMMENT ='帖子表';
 
@@ -189,12 +210,68 @@ DROP TABLE IF EXISTS `user_interest_score`;
 CREATE TABLE user_interest_score
 (
     id          BIGINT AUTO_INCREMENT PRIMARY KEY,
-    user_id     BIGINT NOT NULL COMMENT '用户id',
-    category_id INT    NOT NULL COMMENT '分类id',
-    score       INT DEFAULT 0 COMMENT '用户对分类兴趣评分',
+    user_id     BIGINT   NOT NULL COMMENT '用户id',
+    category_id INT      NOT NULL COMMENT '分类id',
+    score       INT      DEFAULT 0 COMMENT '用户对分类兴趣评分',
+    update_time DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '最近更新时间',
     UNIQUE KEY uk_user_category (user_id, category_id)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4 COMMENT '用户对分类兴趣评分表';
+
+DROP TABLE IF EXISTS `tag`;
+CREATE TABLE IF NOT EXISTS `tag`
+(
+    `id`          BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '标签ID',
+    `name`        VARCHAR(32) NOT NULL COMMENT '标签名称（不含#）',
+    `category_id` INT         NULL COMMENT '关联分类ID（可选）',
+    `use_count`   INT         NOT NULL DEFAULT 0 COMMENT '公开帖子引用计数',
+    `is_hot`      TINYINT(1)  NOT NULL DEFAULT 0 COMMENT '是否推荐热门标签',
+    `enabled`     TINYINT(1)  NOT NULL DEFAULT 1 COMMENT '是否启用',
+    `create_time` DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    UNIQUE KEY `uk_tag_name` (`name`),
+    KEY `idx_tag_category_hot` (`category_id`, `is_hot`, `use_count` DESC)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4 COMMENT ='帖子标签表';
+
+DROP TABLE IF EXISTS `post_tag`;
+CREATE TABLE IF NOT EXISTS `post_tag`
+(
+    `id`          BIGINT AUTO_INCREMENT PRIMARY KEY,
+    `post_id`     BIGINT   NOT NULL COMMENT '帖子ID',
+    `tag_id`      BIGINT   NOT NULL COMMENT '标签ID',
+    `create_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    UNIQUE KEY `uk_post_tag` (`post_id`, `tag_id`),
+    KEY `idx_tag_post` (`tag_id`, `post_id`)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4 COMMENT ='帖子-标签关联表';
+
+DROP TABLE IF EXISTS `user_tag_interest`;
+CREATE TABLE IF NOT EXISTS `user_tag_interest`
+(
+    `id`          BIGINT AUTO_INCREMENT PRIMARY KEY,
+    `user_id`     BIGINT   NOT NULL COMMENT '用户ID',
+    `tag_id`      BIGINT   NOT NULL COMMENT '标签ID',
+    `score`       INT      NOT NULL DEFAULT 0 COMMENT '用户对标签的兴趣分',
+    `update_time` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '最近更新时间',
+    UNIQUE KEY `uk_user_tag` (`user_id`, `tag_id`),
+    KEY `idx_uti_user_score` (`user_id`, `score` DESC)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4 COMMENT ='用户标签兴趣评分表';
+
+DROP TABLE IF EXISTS `user_recommend_feedback`;
+CREATE TABLE IF NOT EXISTS `user_recommend_feedback`
+(
+    `id`            BIGINT AUTO_INCREMENT PRIMARY KEY,
+    `user_id`       BIGINT      NOT NULL COMMENT '操作用户ID',
+    `target_type`   VARCHAR(16) NOT NULL COMMENT '反馈维度: POST / CATEGORY / TAG / AUTHOR',
+    `target_id`     BIGINT      NOT NULL COMMENT '目标ID（帖子/分类/标签/作者ID）',
+    `feedback_type` VARCHAR(16) NOT NULL DEFAULT 'DISLIKE' COMMENT '反馈类型: DISLIKE',
+    `reason`        VARCHAR(64) NULL COMMENT '原因描述',
+    `create_time`   DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    UNIQUE KEY `uk_user_feedback` (`user_id`, `target_type`, `target_id`),
+    KEY `idx_urf_user_type` (`user_id`, `target_type`)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4 COMMENT ='用户推荐负反馈表';
 
 DROP TABLE IF EXISTS `file`;
 
@@ -569,6 +646,127 @@ INSERT INTO `post` (`id`, `user_id`, `cover`, `title`, `content`, `category_id`,
 VALUES (56, 2, 'https://picsum.photos/seed/pc/800/400', '掌机复兴：为什么我们依然热爱便携式游戏设备？',
         '<p>从任天堂 Switch 到 Steam Deck 以及各种 Windows 掌机，便携式游戏设备在近几年迎来了爆发式增长：</p><p><strong>碎片化时间利用</strong> — 在通勤地铁上、出差飞机上，甚至睡前靠在床头，随时随地拿起即玩，按电源键即休眠的便利性是台式机无法比拟的。</p><p><strong>独立游戏与复古模拟的绝配</strong> — 很多精巧的 2D 独立游戏在掌机的小屏幕上反而拥有比 4K 大屏更细腻、更舒适的沉浸体验。</p><p>随身携带一个属于自己的游戏小世界，是成年人最解压的日常消遣之一。</p>',
         11, '2026-07-20 20:30:00', 59, 1080);
+
+# 初始热门标签及帖子关联数据
+INSERT INTO `tag` (`id`, `name`, `category_id`, `use_count`, `is_hot`, `enabled`)
+VALUES (1, 'Java', 7, 0, 1, 1),
+       (2, 'Spring Boot', 7, 0, 1, 1),
+       (3, 'MyBatis-Plus', 7, 0, 0, 1),
+       (4, 'Redis', 4, 0, 1, 1),
+       (5, 'Elasticsearch', 4, 0, 1, 1),
+       (6, '大语言模型', 3, 0, 1, 1),
+       (7, 'Vue3', 7, 0, 1, 1),
+       (8, 'Docker', 7, 0, 1, 1),
+       (9, '网络安全', 4, 0, 0, 1),
+       (10, '夜景摄影', 2, 0, 1, 1),
+       (11, '独立游戏', 11, 0, 1, 1),
+       (12, 'MacBook', 5, 0, 1, 1),
+       (13, '架构设计', 7, 0, 1, 1),
+       (14, 'WebSocket', 7, 0, 0, 1),
+       (15, '效率工具', 4, 0, 1, 1),
+       (16, '唐诗', 9, 0, 0, 1),
+       (17, '前端趋势', 4, 0, 1, 1),
+       (18, '半导体', 6, 0, 1, 1),
+       (19, '极简生活', 1, 0, 1, 1),
+       (20, '租房指南', 1, 0, 1, 1),
+       (21, '家常美食', 1, 0, 1, 1),
+       (22, '健康睡眠', 1, 0, 0, 1),
+       (23, '风光摄影', 2, 0, 1, 1),
+       (24, '微距摄影', 2, 0, 0, 1),
+       (25, '黑白影像', 2, 0, 1, 1),
+       (26, '野生动物', 2, 0, 0, 1),
+       (27, 'AI绘画', 3, 0, 1, 1),
+       (28, 'Transformer', 3, 0, 1, 1),
+       (29, '边缘计算', 3, 0, 0, 1),
+       (30, '脑机接口', 4, 0, 1, 1),
+       (31, 'RISC-V', 4, 0, 0, 1),
+       (32, '旗舰手机', 5, 0, 1, 1),
+       (33, '无线耳机', 5, 0, 1, 1),
+       (34, '4K显示器', 5, 0, 0, 1),
+       (35, '智能手表', 5, 0, 0, 1),
+       (36, '股票投资', 6, 0, 1, 1),
+       (37, '数字货币', 6, 0, 1, 1),
+       (38, '基金定投', 6, 0, 1, 1),
+       (39, '养老规划', 6, 0, 0, 1),
+       (40, '安卓玩机', 7, 0, 0, 1),
+       (41, 'Hi-Res音频', 8, 0, 1, 1),
+       (42, '黑胶唱片', 8, 0, 1, 1),
+       (43, '吉他弹唱', 8, 0, 1, 1),
+       (44, '大唐长安', 9, 0, 1, 1),
+       (45, '丝绸之路', 9, 0, 1, 1),
+       (46, '黑神话悟空', 11, 0, 1, 1),
+       (47, '开放世界', 11, 0, 1, 1),
+       (48, '掌机', 11, 0, 1, 1),
+       (49, '社区新手', 1, 0, 0, 1),
+       (50, '全栈开发', 7, 0, 1, 1);
+
+INSERT INTO `post_tag` (`post_id`, `tag_id`)
+VALUES (1, 49), (1, 19),
+       (2, 1), (2, 2), (2, 3),
+       (3, 4), (3, 13), (3, 50),
+       (4, 5), (4, 1),
+       (5, 6), (5, 50),
+       (6, 7), (6, 17), (6, 14),
+       (7, 8), (7, 50),
+       (8, 9), (8, 2),
+       (9, 16),
+       (10, 4), (10, 13), (10, 9),
+       (11, 10), (11, 23),
+       (12, 11), (12, 48),
+       (13, 12), (13, 8), (13, 1),
+       (14, 2), (14, 1),
+       (15, 14), (15, 7), (15, 2),
+       (16, 15), (16, 8),
+       (17, 3), (17, 1),
+       (18, 16), (18, 44),
+       (19, 17), (19, 7),
+       (20, 18), (20, 31),
+       (21, 2), (21, 9), (21, 1),
+       (22, 4), (22, 13),
+       (23, 50), (23, 9),
+       (24, 13), (24, 1),
+       (25, 19),
+       (26, 20), (26, 19),
+       (27, 21),
+       (28, 22), (28, 19),
+       (29, 23), (29, 10),
+       (30, 24), (30, 23),
+       (31, 25), (31, 23),
+       (32, 26), (32, 23),
+       (33, 6), (33, 28),
+       (34, 27), (34, 6),
+       (35, 28), (35, 6),
+       (36, 29), (36, 6),
+       (37, 30),
+       (38, 31), (38, 18),
+       (39, 32),
+       (40, 33), (40, 41),
+       (41, 34), (41, 15),
+       (42, 35), (42, 32),
+       (43, 36), (43, 38),
+       (44, 37), (44, 36),
+       (45, 38), (45, 36),
+       (46, 39), (46, 38),
+       (47, 40), (47, 32),
+       (48, 40),
+       (49, 41), (49, 33),
+       (50, 42), (50, 41),
+       (51, 43),
+       (52, 44), (52, 16),
+       (53, 45), (53, 44),
+       (54, 46), (54, 47),
+       (55, 47), (55, 11),
+       (56, 48), (56, 11);
+
+UPDATE `tag` tg
+    LEFT JOIN (
+        SELECT pt.`tag_id`, COUNT(*) AS `cnt`
+        FROM `post_tag` pt
+        INNER JOIN `post` p ON pt.`post_id` = p.`id`
+        WHERE p.`enabled` = 1 AND (p.`is_private` IS NULL OR p.`is_private` = 0)
+        GROUP BY pt.`tag_id`
+    ) agg ON tg.`id` = agg.`tag_id`
+SET tg.`use_count` = COALESCE(agg.`cnt`, 0);
 
 -- 初始化首页帖子数据（自动将种子帖子导入 home_post 表）
 INSERT INTO `home_post` (`post_id`, `user_id`, `create_time`)

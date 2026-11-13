@@ -42,11 +42,15 @@ public class PostController {
     }
 
     @GetMapping("/list")
-    @Operation(summary = "首页帖子列表", description = "基于用户兴趣的个性化推荐帖子列表（游标分页）")
+    @Operation(summary = "首页帖子列表", description = "支持个性化推荐(recommend)、热门(hot)与最新(latest)三种模式及服务端换一换")
     public Result listPosts(
-            @Parameter(description = "游标ID（首次传当前时间戳）") @RequestParam Long lastId,
-            @Parameter(description = "偏移量") @RequestParam(defaultValue = "0") Integer offset) {
-        return postService.listPosts(lastId, offset);
+            @Parameter(description = "游标ID（latest 模式首屏可不传或传当前时间戳）") @RequestParam(required = false) Long lastId,
+            @Parameter(description = "偏移量") @RequestParam(defaultValue = "0") Integer offset,
+            @Parameter(description = "信息流模式: recommend / hot / latest") @RequestParam(defaultValue = "recommend") String mode,
+            @Parameter(description = "是否触发换一换刷新") @RequestParam(defaultValue = "false") Boolean refresh,
+            @Parameter(description = "会话随机种子") @RequestParam(required = false) Long seed,
+            @RequestHeader(value = "X-Visitor-Id", required = false) String visitorId) {
+        return postService.listPosts(lastId, offset, mode, refresh, seed, visitorId);
     }
 
     @GetMapping("/follow/list")

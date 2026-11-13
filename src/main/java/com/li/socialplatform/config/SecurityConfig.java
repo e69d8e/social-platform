@@ -58,6 +58,8 @@ public class SecurityConfig {
                                                 "/user/list/post", // 搜索帖子（游客可搜）
                                                 "/user/list/user", // 搜索用户（游客可搜）
                                                 "/category", // 获取帖子分类
+                                                "/category/**", // 获取分类下热门标签等公开分类元数据
+                                                "/tag/**", // 获取热门标签、搜索标签及标签筛选帖子
                                                 "/ws/**"
                                         ).permitAll() // 放行
                                         // 注意：搜索历史属于个人数据，必须登录后访问，不能放进 permitAll
@@ -71,6 +73,9 @@ public class SecurityConfig {
                                         .requestMatchers(
                                                 "/reviewer/**"
                                         ).hasAnyRole("ADMIN", "REVIEWER")
+                                        // 黑名单是个人数据，必须登录（anyRequest().authenticated() 已覆盖，
+                                        // 这里显式列出便于审计）
+                                        .requestMatchers("/blacklist/**").authenticated()
                                         .anyRequest() // 所有请求
                                         .authenticated() // 需要认证
                 )

@@ -42,6 +42,13 @@ public class PrivateMessageController {
         return privateMessageService.getConversationList(pageNum, pageSize);
     }
 
+    @GetMapping("/conversation/{conversationId}")
+    @Operation(summary = "会话详情", description = "获取单个会话的对方信息、最后一条消息与是否可继续发送（拉黑后 canSend=false）")
+    public Result getConversation(
+            @Parameter(description = "会话ID") @PathVariable Long conversationId) {
+        return privateMessageService.getConversation(conversationId);
+    }
+
     @GetMapping("/history/{conversationId}")
     @Operation(summary = "获取消息历史", description = "获取指定会话的消息记录，按时间倒序分页")
     public Result getMessageHistory(

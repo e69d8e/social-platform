@@ -21,6 +21,22 @@ import java.io.Serializable;
 public class Category implements Serializable {
     @TableId(value = "id", type = IdType.AUTO)
     private Integer id;
+
     @TableField(value = "name")
     private String name;
+
+    @TableField(value = "description")
+    private String description;
+
+    @TableField(value = "icon")
+    private String icon;
+
+    @TableField(value = "color")
+    private String color;
+
+    @TableField(value = "sort_order")
+    private Integer sortOrder;
+
+    @TableField(value = "enabled")
+    private Boolean enabled;
 }

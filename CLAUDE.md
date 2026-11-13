@@ -96,6 +96,19 @@ com.li.socialplatform
 
 Full DDL with seed data at `src/main/resources/social_platform.sql` (also auto-loaded on first MySQL container boot via `docker-entrypoint-initdb.d`). ER diagram in `docs/class-diagram.md`. Tables: user, authority, follow, category, post, comment, like_record, session, ban_record, user_interest_score, file, search_history, private_conversation, private_message, home_post, user_inbox.
 
+### User blacklist (用户级拉黑)
+
+Distinct from admin bans (`ban_record`, `/admin/**`, `/reviewer/**`, which stay exempt).
+
+- Table `user_blacklist(user_id, blocked_user_id, create_time)`, unique `uk_user_blocked`.
+- `BlacklistUtil` (Cache-Aside) keeps two Redis sets: `blacklist:{uid}` (I blocked) and `blocked-by:{uid}` (blocked me), plus `blacklist-loaded:{uid}` marker. `hiddenUserIds(viewer)` = union of both → **symmetric** invisibility.
+- Filtering is done at **read time** (`hiddenUserIds`/`isHidden`), never by rebuilding the ES index, so a block takes effect immediately even for entries already in Redis timelines:
+  home feed ES query, `getScrollResult` (home/follow feeds), profile post list, category post list, post search, user search, favorites, post detail, AI tools (`searchPosts` / `getHotPosts` / `getPostDetail` / `searchCreators`, both the ES and the MySQL fallback paths).
+- Write paths reject with the existing "该帖子不存在"/"用户不存在" wording (no new signal): like, star, comment, follow, private message (`对方不接收你的私信`).
+- Blocking auto-removes follow relations in both directions (DB + both ZSets + fans count + ES) but never restores them on unblock.
+- `UserVO.blocked` only tells the blocker; the blocked user gets no flag. `ConversationVO.canSend` gates the chat input; `GET /message/conversation/{id}` feeds the chat header so it no longer depends on the profile endpoint.
+- Admin/reviewer governance endpoints are exempt; ordinary browse endpoints filter for admins too.
+
 ### Recent API contract changes (2026-11, see frontend `AUDIT.md`)
 
 - `DELETE /comment/{id}` — new: comment author, REVIEWER or ADMIN can delete; deleting a top-level comment also deletes its replies and their like records, and removes the ZSet cursor entry.
@@ -105,6 +118,8 @@ Full DDL with seed data at `src/main/resources/social_platform.sql` (also auto-l
 - `POST /post/migrate/home` — now `@PreAuthorize("hasRole('ADMIN')")`.
 - `GET /user/search-history*` — no longer in the `permitAll` whitelist.
 - Personalized feed (`PostServiceImpl.getPersonalizedPosts`) now excludes `isPrivate` posts; like/star reject other users' private posts.
+- `POST /blacklist/{userId}`, `DELETE /blacklist/{userId}`, `GET /blacklist` — user-level block/unblock/list (idempotent, cap 500).
+- `GET /message/conversation/{conversationId}` — single conversation with `canSend`.
 - `search_history` now has `UNIQUE KEY uk_user_keyword (user_id, keyword)`; `recordSearch` inserts first and falls back to an update on duplicate (the search page fires post+user search concurrently, which used to create duplicate rows). Existing databases need the index applied once:
   `DELETE s1 FROM search_history s1 JOIN search_history s2 ON s1.user_id=s2.user_id AND s1.keyword=s2.keyword AND s1.id>s2.id; ALTER TABLE search_history ADD UNIQUE KEY uk_user_keyword (user_id, keyword);`
 

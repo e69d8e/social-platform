@@ -96,14 +96,15 @@ public class UserController {
     }
 
     @GetMapping("/list/post")
-    @Operation(summary = "搜索帖子", description = "根据关键词和分类搜索帖子（ES全文搜索）")
+    @Operation(summary = "搜索帖子", description = "根据关键词、分类和标签搜索帖子（ES全文搜索）")
     public Result listPost(
             @Parameter(description = "搜索关键词") @RequestParam(defaultValue = "") String keyword,
             @Parameter(description = "页码") @RequestParam(defaultValue = "1") @Min(1) Integer pageNum,
             @Parameter(description = "每页数量") @RequestParam(defaultValue = "8") @Min(1) @Max(100) Integer pageSize,
             @Parameter(description = "分类ID") @RequestParam(required = false) Integer categoryId,
+            @Parameter(description = "标签ID") @RequestParam(required = false) Long tagId,
             @Parameter(description = "是否记录搜索历史（实时联想传 false）") @RequestParam(defaultValue = "true") Boolean record) {
-        return userService.listPost(keyword, pageNum, pageSize, categoryId, !Boolean.FALSE.equals(record));
+        return userService.listPost(keyword, pageNum, pageSize, categoryId, tagId, !Boolean.FALSE.equals(record));
     }
 
     @GetMapping("/list/user")

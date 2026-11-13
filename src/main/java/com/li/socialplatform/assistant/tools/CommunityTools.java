@@ -3,6 +3,13 @@ package com.li.socialplatform.assistant.tools;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.li.socialplatform.pojo.entity.*;
 import com.li.socialplatform.server.mapper.*;
+import com.li.socialplatform.common.utils.BlacklistUtil;
+import com.li.socialplatform.common.utils.EsQueryUtil;
+import com.li.socialplatform.common.utils.UserIdUtil;
+import co.elastic.clients.elasticsearch._types.FieldValue;
+import co.elastic.clients.elasticsearch._types.query_dsl.Query;
+import org.springframework.data.elasticsearch.client.elc.ElasticsearchTemplate;
+import org.springframework.data.elasticsearch.client.elc.NativeQuery;
 import com.li.socialplatform.server.repository.PostElasticsearchRepository;
 import com.li.socialplatform.server.repository.UserElasticsearchRepository;
 import dev.langchain4j.agent.tool.P;
@@ -36,6 +43,9 @@ public class CommunityTools {
     private final UserInterestScoreMapper userInterestScoreMapper;
     private final PostElasticsearchRepository postElasticsearchRepository;
     private final UserElasticsearchRepository userElasticsearchRepository;
+    private final ElasticsearchTemplate elasticsearchTemplate;
+    private final BlacklistUtil blacklistUtil;
+    private final UserIdUtil userIdUtil;
 
     @Tool("搜索社区内的真实帖子。当用户想寻找特定话题、问题或领域的帖子时调用此工具。")
     public String searchPosts(
@@ -57,17 +67,40 @@ public class CommunityTools {
                 }
             }
 
+            // AI 检索同样遵守黑名单：与本人互相不可见的作者不出现
+            Set<Long> hidden = blacklistUtil.hiddenUserIds(userIdUtil.getUserId());
+            // lambda 里引用需要 effectively-final 的副本
+            final Integer categoryFilter = targetCategoryId;
+            final String kw = keyword;
             List<Post> posts = new ArrayList<>();
             // 优先尝试 Elasticsearch 检索
             try {
                 Pageable pageable = PageRequest.of(0, safeLimit, Sort.by(Sort.Direction.DESC, "likeCount"));
-                if (StringUtils.isNotBlank(keyword)) {
-                    posts = postElasticsearchRepository.searchByKeywordAndEnabled(keyword.trim(), pageable);
-                } else if (targetCategoryId != null) {
-                    posts = postElasticsearchRepository.findByCategoryIdAndEnabledTrue(targetCategoryId, pageable);
-                } else {
-                    posts = postElasticsearchRepository.findByEnabledTrue(pageable);
-                }
+                NativeQuery esQuery = NativeQuery.builder()
+                        .withQuery(q -> q.bool(b -> {
+                            b.filter(f -> f.term(t -> t.field("enabled").value(FieldValue.of(true))));
+                            b.mustNot(mn -> mn.term(t -> t.field("isPrivate").value(FieldValue.of(true))));
+                            if (StringUtils.isNotBlank(kw)) {
+                                b.should(sh -> sh.match(m -> m.field("title").query(kw.trim())));
+                                b.should(sh -> sh.match(m -> m.field("content").query(kw.trim())));
+                                b.minimumShouldMatch("1");
+                            }
+                            if (categoryFilter != null) {
+                                b.filter(f -> f.term(t -> t.field("categoryId")
+                                        .value(FieldValue.of(String.valueOf(categoryFilter)))));
+                            }
+                            Query hiddenAuthors = EsQueryUtil.excludeKeywordField("userId", hidden);
+                            if (hiddenAuthors != null) {
+                                b.mustNot(hiddenAuthors);
+                            }
+                            return b;
+                        }))
+                        .withPageable(pageable)
+                        .withSort(Sort.by(Sort.Direction.DESC, "likeCount"))
+                        .build();
+                posts = elasticsearchTemplate.search(esQuery, Post.class).stream()
+                        .map(hit -> hit.getContent())
+                        .toList();
 
                 // 若指定了分类且关键词搜索结果包含其他分类，进行过滤
                 if (targetCategoryId != null && !posts.isEmpty()) {
@@ -92,6 +125,8 @@ public class CommunityTools {
                     wrapper.and(w -> w.like(Post::getTitle, keyword.trim())
                             .or().like(Post::getContent, keyword.trim()));
                 }
+                // MySQL 降级路径同样排除黑名单作者
+                wrapper.notIn(!hidden.isEmpty(), Post::getUserId, hidden);
                 wrapper.orderByDesc(Post::getLikeCount)
                         .last("limit " + safeLimit);
                 posts = postMapper.selectList(wrapper);
@@ -114,8 +149,10 @@ public class CommunityTools {
         log.info("AI Tool getHotPosts called: limit={}", safeLimit);
 
         try {
+            Set<Long> hidden = blacklistUtil.hiddenUserIds(userIdUtil.getUserId());
             LambdaQueryWrapper<Post> wrapper = new LambdaQueryWrapper<Post>()
                     .eq(Post::getEnabled, true)
+                    .notIn(!hidden.isEmpty(), Post::getUserId, hidden)
                     .orderByDesc(Post::getLikeCount)
                     .orderByDesc(Post::getViewCount)
                     .last("limit " + safeLimit);
@@ -142,6 +179,12 @@ public class CommunityTools {
         try {
             Post post = postMapper.selectById(postId);
             if (post == null || Boolean.FALSE.equals(post.getEnabled())) {
+                return "帖子不存在或已被屏蔽/下架。";
+            }
+            // 黑名单/私密帖：AI 助手也不能代读（否则成为绕过入口）
+            if (blacklistUtil.isHidden(userIdUtil.getUserId(), post.getUserId())
+                    || (Boolean.TRUE.equals(post.getIsPrivate())
+                        && !Objects.equals(userIdUtil.getUserId(), post.getUserId()))) {
                 return "帖子不存在或已被屏蔽/下架。";
             }
 
@@ -195,10 +238,26 @@ public class CommunityTools {
         log.info("AI Tool searchCreators called: keyword={}, limit={}", keyword, safeLimit);
 
         try {
+            Set<Long> hidden = blacklistUtil.hiddenUserIds(userIdUtil.getUserId());
             List<User> users = new ArrayList<>();
             try {
                 Pageable pageable = PageRequest.of(0, safeLimit, Sort.by(Sort.Direction.DESC, "fansCount"));
-                users = userElasticsearchRepository.findByUsernameOrNickname(keyword, keyword, pageable);
+                NativeQuery esQuery = NativeQuery.builder()
+                        .withQuery(q -> q.bool(b -> {
+                            b.must(m -> m.multiMatch(mm -> mm.fields("username.edge", "nickname.edge").query(keyword)));
+                            b.filter(f -> f.term(t -> t.field("enabled").value(FieldValue.of(true))));
+                            Query hiddenUsers = EsQueryUtil.excludeKeywordField("id", hidden);
+                            if (hiddenUsers != null) {
+                                b.mustNot(hiddenUsers);
+                            }
+                            return b;
+                        }))
+                        .withPageable(pageable)
+                        .withSort(Sort.by(Sort.Direction.DESC, "fansCount"))
+                        .build();
+                users = elasticsearchTemplate.search(esQuery, User.class).stream()
+                        .map(hit -> hit.getContent())
+                        .toList();
             } catch (Exception esEx) {
                 log.warn("Elasticsearch 用户检索失败，降级为 MySQL: {}", esEx.getMessage());
             }
@@ -209,6 +268,7 @@ public class CommunityTools {
                         .and(w -> w.like(User::getNickname, keyword)
                                 .or().like(User::getUsername, keyword)
                                 .or().like(User::getBio, keyword))
+                        .notIn(!hidden.isEmpty(), User::getId, hidden)
                         .orderByDesc(User::getFansCount)
                         .last("limit " + safeLimit);
                 users = userMapper.selectList(wrapper);
@@ -239,17 +299,28 @@ public class CommunityTools {
     public String getCommunityCategories() {
         log.info("AI Tool getCommunityCategories called");
         try {
-            List<Category> categories = categoryMapper.selectList(null);
+            List<Category> categories = categoryMapper.selectList(
+                    new LambdaQueryWrapper<Category>()
+                            .eq(Category::getEnabled, true)
+                            .orderByAsc(Category::getSortOrder)
+                            .orderByAsc(Category::getId));
             if (categories.isEmpty()) {
                 return "社区分类列表为空。";
             }
             StringBuilder sb = new StringBuilder();
             sb.append("社区包含以下分类板块：\n");
             for (Category c : categories) {
-                sb.append("- [分类ID: ").append(c.getId()).append("] ").append(c.getName())
-                        .append("（站内链接: [").append(c.getName()).append("](/category/").append(c.getId()).append(")）\n");
+                sb.append("- [分类ID: ").append(c.getId()).append("] ");
+                if (c.getIcon() != null && !c.getIcon().isBlank()) {
+                    sb.append(c.getIcon()).append(" ");
+                }
+                sb.append(c.getName());
+                if (c.getDescription() != null && !c.getDescription().isBlank()) {
+                    sb.append(" - ").append(c.getDescription());
+                }
+                sb.append("（站内链接: [").append(c.getName()).append("](/category/").append(c.getId()).append(")）\n");
             }
-            sb.append("为用户生成发帖草稿推荐分类时，请严格从以上分类名称中选取。");
+            sb.append("为用户生成发帖草稿推荐分类时，请严格从以上分类名称中选取，也可同时附带 `标签: 标签1, 标签2` 建议。");
             return sb.toString();
         } catch (Exception e) {
             log.error("getCommunityCategories execution failed", e);

@@ -16,9 +16,14 @@ import com.li.socialplatform.pojo.entity.*;
 import com.li.socialplatform.pojo.entity.Result;
 import com.li.socialplatform.pojo.vo.PostDetailVO;
 import com.li.socialplatform.pojo.vo.PostVO;
+import com.li.socialplatform.pojo.vo.TagVO;
+import com.li.socialplatform.recommend.HomeFeedService;
 import com.li.socialplatform.server.mapper.*;
 import com.li.socialplatform.server.repository.PostElasticsearchRepository;
+import com.li.socialplatform.server.service.ICategoryService;
 import com.li.socialplatform.server.service.IPostService;
+import com.li.socialplatform.server.service.ITagService;
+import com.li.socialplatform.server.service.helper.PostHydrationHelper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import co.elastic.clients.elasticsearch._types.Time;
@@ -73,6 +78,12 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
     private final AsyncTaskUtil asyncTaskUtil;
     private final StarRecordMapper starRecordMapper;
     private final CommentLikeRecordMapper commentLikeRecordMapper;
+    private final BlacklistUtil blacklistUtil;
+    private final HomeFeedService homeFeedService;
+    private final ITagService tagService;
+    private final ICategoryService categoryService;
+    private final PostHydrationHelper postHydrationHelper;
+    private final PostTagMapper postTagMapper;
 
     /** 默认分类ID：social_platform.sql 中 category 表种子数据 id=1 为“其他” */
     private static final Integer DEFAULT_CATEGORY_ID = 1;
@@ -122,10 +133,23 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         }
         post.setContent(content);
         post.setCover(postDTO.getCover());
-        post.setCategoryId(postDTO.getCategoryId() == null ? DEFAULT_CATEGORY_ID : postDTO.getCategoryId());
+        Integer targetCategoryId = postDTO.getCategoryId() == null ? DEFAULT_CATEGORY_ID : postDTO.getCategoryId();
+        Category category = categoryMapper.selectById(targetCategoryId);
+        if (category == null || !Boolean.TRUE.equals(category.getEnabled())) {
+            return Result.error(MessageConstant.CATEGORY_NOT_EXIST);
+        }
+        List<String> normalizedTags;
+        try {
+            normalizedTags = tagService.normalizeTagNames(postDTO.getTags());
+        } catch (IllegalArgumentException e) {
+            return Result.error(e.getMessage());
+        }
+        post.setCategoryId(targetCategoryId);
         boolean isPrivate = Boolean.TRUE.equals(postDTO.getIsPrivate());
         post.setIsPrivate(isPrivate);
+        post.setCommentCount(0);
         postMapper.insert(post);
+        List<TagVO> boundTags = tagService.bindPostTags(post.getId(), targetCategoryId, normalizedTags, isPrivate);
         log.info("用户 {} 发表了帖子 {}（私密: {}）", id, post.getId(), isPrivate);
         long time = System.currentTimeMillis();
         // 将帖子添加到缓存中
@@ -157,12 +181,19 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         }
         post.setLikeCount(0);
         post.setStarCount(0);
+        post.setCommentCount(0);
         post.setEnabled(true);
+        post.setTagIds(boundTags.stream().map(TagVO::getId).toList());
+        post.setTagNames(boundTags.stream().map(TagVO::getName).toList());
         // 转换为纯文本
         String text = HtmlUtils.htmlToPlainText(postDTO.getContent());
         post.setContent(text);
         // 添加到ES中
         postElasticsearchRepository.save(post);
+        if (!isPrivate) {
+            categoryService.evictCategoryCache();
+            userIntersetScoreUtil.recordPostInteraction(id, targetCategoryId, post.getTagIds(), 3, 4);
+        }
         return Result.ok(MessageConstant.PUBLISH_SUCCESS, "");
     }
 
@@ -184,6 +215,10 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
                 return Result.error(MessageConstant.POST_NOT_EXIST);
             }
         }
+        // 黑名单：双方互相不可见（拉黑者与被拉黑者都看不到对方的内容）
+        if (blacklistUtil.isHidden(userId, post.getUserId())) {
+            return Result.error(MessageConstant.POST_NOT_EXIST);
+        }
         // 私密帖子仅作者本人可见（管理员/审核员可放行用于内容管理）
         boolean isModerator = loginUser != null
                 && (AuthorityConstant.REVIEWER.equals(loginUser.getAuthorityId()) || AuthorityConstant.ADMIN.equals(loginUser.getAuthorityId()));
@@ -192,9 +227,14 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
             return Result.error(MessageConstant.POST_NOT_EXIST);
         }
         // 只有确认「这篇帖子对当前访问者可见」之后才计入兴趣分，
-        // 否则私密/封禁帖也会污染推荐画像
+        // 并按 5 分钟防刷冷却记录浏览兴趣（分类 +1、标签 +2）
+        List<TagVO> postTags = tagService.getTagsByPostIds(List.of(id)).getOrDefault(id, List.of());
         if (userId != null && !Boolean.TRUE.equals(post.getIsPrivate())) {
-            userIntersetScoreUtil.changeScore(userId, post.getCategoryId(), 1);
+            userIntersetScoreUtil.recordViewWithCooldown(
+                    userId,
+                    post.getId(),
+                    post.getCategoryId(),
+                    postTags.stream().map(TagVO::getId).toList());
         }
         User user = userMapper.selectById(post.getUserId());
         if (user == null) {
@@ -203,7 +243,10 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         // 查询是否点过赞
         PostDetailVO postDetailVO = BeanUtil.copyProperties(post, PostDetailVO.class);
         Category category = categoryMapper.selectById(post.getCategoryId());
+        postDetailVO.setCategoryId(post.getCategoryId());
         postDetailVO.setCategory(category != null ? category.getName() : "未分类");
+        postDetailVO.setTags(postTags);
+        postDetailVO.setCommentCount(post.getCommentCount() == null ? 0 : post.getCommentCount());
         postDetailVO.setLiked(dataCacheUtil.isLiked(id, userId));
         postDetailVO.setLikeCount(dataCacheUtil.getLikeCount(id));
         postDetailVO.setAvatar(user.getAvatar());
@@ -221,42 +264,51 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
 
     @Override
     public Result listPosts(Long lastId, Integer offset) {
-        int pageSize = Integer.parseInt(systemConstants.defaultPageSize);
-        Long userId = userIdUtil.getUserId();
-
-        // 未登录：按时间倒序从首页帖子缓存获取
-        if (userId == null) {
-            Set<ZSetOperations.TypedTuple<Object>> typedTuples = getHomePostCache(lastId, offset, pageSize);
-            return Result.ok(getScrollResult(typedTuples, null));
-        }
-
-        // 获取用户兴趣评分
-        Map<Integer, Integer> interestScores = userIntersetScoreUtil.getUserInterestScores(userId);
-
-        if (interestScores.isEmpty()) {
-            // 无兴趣数据：按时间倒序从首页帖子缓存获取
-            Set<ZSetOperations.TypedTuple<Object>> typedTuples = getHomePostCache(lastId, offset, pageSize);
-            return Result.ok(getScrollResult(typedTuples, userId));
-        }
-
-        // 个性化推荐：使用 ES 按兴趣分类加权查询
-        return getPersonalizedPosts(userId, interestScores, offset, pageSize);
+        return listPosts(lastId, offset, "recommend", false, null, null);
     }
 
-    /**
-     * 获取首页帖子缓存，缓存未命中时从 home_post 表加载
-     */
-    private Set<ZSetOperations.TypedTuple<Object>> getHomePostCache(Long lastId, int offset, int pageSize) {
-        String homePostKey = KeyConstant.HOME_POST_LIST_KEY;
-        Set<ZSetOperations.TypedTuple<Object>> typedTuples = redisUtil.zsets()
-                .reverseRangeByScoreWithScores(homePostKey, 0, lastId, offset, pageSize);
-        if (typedTuples != null && !typedTuples.isEmpty()) {
-            return typedTuples;
+    @Override
+    public Result listPosts(Long lastId, Integer offset, String mode, Boolean refresh, Long seed, String visitorId) {
+        return homeFeedService.loadHomeFeed(lastId, offset, mode, refresh, seed, visitorId);
+    }
+
+    @Override
+    public Result listPostsByTag(Long tagId, String tagName, Integer pageNum, Integer pageSize) {
+        Tag tag = tagService.resolveTag(tagId, tagName);
+        if (tag == null) {
+            return Result.ok(List.of(), 0L);
         }
-        // 缓存未命中，从 home_post 表加载
-        loadHomePostFromDB();
-        return redisUtil.zsets()
-                .reverseRangeByScoreWithScores(homePostKey, 0, lastId, offset, pageSize);
+        List<Long> postIds = postTagMapper.selectList(
+                        new LambdaQueryWrapper<PostTag>()
+                                .select(PostTag::getPostId)
+                                .eq(PostTag::getTagId, tag.getId()))
+                .stream()
+                .map(PostTag::getPostId)
+                .distinct()
+                .toList();
+        if (postIds.isEmpty()) {
+            return Result.ok(List.of(), 0L);
+        }
+        Long viewerId = userIdUtil.getUserId();
+        Set<Long> hidden = blacklistUtil.hiddenUserIds(viewerId);
+        List<Long> disabledAuthorIds = userMapper.selectList(
+                        new LambdaQueryWrapper<User>().select(User::getId).eq(User::getEnabled, false))
+                .stream().map(User::getId).toList();
+        Set<Long> excludedUsers = new HashSet<>(hidden);
+        excludedUsers.addAll(disabledAuthorIds);
+
+        LambdaQueryWrapper<Post> wrapper = new LambdaQueryWrapper<Post>()
+                .in(Post::getId, postIds)
+                .eq(Post::getEnabled, true)
+                .and(w -> w.eq(Post::getIsPrivate, false).or().isNull(Post::getIsPrivate))
+                .orderByDesc(Post::getLikeCount)
+                .orderByDesc(Post::getCreateTime);
+        if (!excludedUsers.isEmpty()) {
+            wrapper.notIn(Post::getUserId, excludedUsers);
+        }
+        IPage<Post> page = postMapper.selectPage(new Page<>(pageNum, pageSize), wrapper);
+        List<PostVO> vos = postHydrationHelper.hydrate(page.getRecords(), viewerId, true, null);
+        return Result.ok(vos, page.getTotal());
     }
 
     /**
@@ -286,90 +338,6 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         return createTime != null
                 ? createTime.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
                 : (double) System.currentTimeMillis();
-    }
-
-    private Result getPersonalizedPosts(Long userId, Map<Integer, Integer> interestScores, int offset, int pageSize) {
-        int maxScore = interestScores.values().stream().mapToInt(Integer::intValue).max().orElse(1);
-
-        NativeQuery nativeQuery = NativeQuery.builder()
-                .withQuery(Query.of(q -> q.functionScore(fs -> {
-                    fs.query(fq -> fq.bool(b -> {
-                        b.must(m -> m.term(t -> t.field("enabled").value(true)));
-                        // 私密帖子只属于作者本人：推荐流必须显式排除，
-                        // 否则别人的私密帖会出现在登录用户的首页（隐私泄漏）
-                        b.mustNot(mn -> mn.term(t -> t.field("isPrivate").value(true)));
-                        for (Map.Entry<Integer, Integer> entry : interestScores.entrySet()) {
-                            if (entry.getValue() > 0) {
-                                float boost = (float) entry.getValue() / maxScore;
-                                b.should(s -> s.term(t -> t.field("categoryId").value(entry.getKey()).boost(boost)));
-                            }
-                        }
-                        b.minimumShouldMatch("0");
-                        return b;
-                    }));
-                    fs.functions(f -> f.gauss(g -> g
-                            .date(d -> d
-                                    .field("createTime")
-                                    .placement(p -> p
-                                            .origin("now")
-                                            .scale(Time.of(t -> t.time("7d")))
-                                            .decay(0.5)
-                                    )
-                            )
-                    ));
-                    fs.boostMode(FunctionBoostMode.Multiply);
-                    return fs;
-                })))
-                .withSort(Sort.by(Sort.Order.desc("_score")))
-                .withPageable(PageRequest.of(offset / pageSize, pageSize))
-                .build();
-
-        SearchHits<Post> searchHits = elasticsearchTemplate.search(nativeQuery, Post.class);
-
-        List<Long> userIds = searchHits.stream()
-                .map(hit -> hit.getContent().getUserId())
-                .filter(Objects::nonNull)
-                .distinct()
-                .toList();
-        Map<Long, User> userMap = new HashMap<>();
-        if (!userIds.isEmpty()) {
-            userMapper.selectBatchIds(userIds).forEach(u -> userMap.put(u.getId(), u));
-        }
-
-        // 批量读取点赞数与点赞状态（pipeline 一次往返）
-        List<Long> postIds = searchHits.stream()
-                .map(hit -> hit.getContent().getId())
-                .filter(Objects::nonNull)
-                .toList();
-        Map<Long, Integer> likeCounts = dataCacheUtil.getLikeCounts(postIds);
-        Map<Long, Boolean> likedMap = dataCacheUtil.isLikedBatch(userId, postIds);
-        Map<Long, Boolean> starredMap = getStarredMap(userId, postIds);
-
-        List<PostVO> postVOS = new ArrayList<>();
-        long minTime = 0L;
-        for (SearchHit<Post> hit : searchHits) {
-            Post post = hit.getContent();
-            PostVO postVO = BeanUtil.copyProperties(post, PostVO.class);
-            User author = userMap.get(post.getUserId());
-            if (author != null) {
-                postVO.setUsername(author.getUsername());
-                postVO.setNickname(author.getNickname());
-            }
-            postVO.setLikeCount(likeCounts.getOrDefault(post.getId(), 0));
-            postVO.setLiked(likedMap.getOrDefault(post.getId(), false));
-            postVO.setStarCount(post.getStarCount() == null ? 0 : post.getStarCount());
-            postVO.setStarred(starredMap.getOrDefault(post.getId(), false));
-            postVOS.add(postVO);
-            if (post.getCreateTime() != null) {
-                minTime = post.getCreateTime().atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
-            }
-        }
-
-        ScrollResult<PostVO> result = new ScrollResult<>();
-        result.setList(postVOS);
-        result.setMinTime(minTime);
-        result.setOffset(offset + postVOS.size());
-        return Result.ok(result);
     }
 
     @Override
@@ -437,30 +405,18 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         // 与 getScrollResult 行为一致：主页列表不展示已封禁帖子；
         // 私密帖子仅作者本人在自己主页可见
         boolean isSelf = userId != null && userId.equals(id);
+        // 与本人互相拉黑：主页整体不可见（帖子列表返回空）
+        java.util.Set<Long> hidden = blacklistUtil.hiddenUserIds(userId);
+        if (userId != null && hidden.contains(id)) {
+            return Result.ok(new ArrayList<>(), 0L);
+        }
         IPage<Post> postIPage = postMapper.selectPage(page, new LambdaQueryWrapper<Post>()
                 .eq(Post::getUserId, id)
                 .eq(Post::getEnabled, true)
-                .eq(!isSelf, Post::getIsPrivate, false));
+                .eq(!isSelf, Post::getIsPrivate, false)
+                .notIn(!hidden.isEmpty(), Post::getUserId, hidden));
         List<Post> records = postIPage.getRecords();
-        List<PostVO> postVOS = new ArrayList<>();
-        User author = userMapper.selectById(id);
-        String username = author != null ? author.getUsername() : null;
-        String nickname = author != null ? author.getNickname() : null;
-        // 批量读取点赞数与点赞状态（pipeline 一次往返）
-        List<Long> postIds = records.stream().map(Post::getId).toList();
-        Map<Long, Integer> likeCounts = dataCacheUtil.getLikeCounts(postIds);
-        Map<Long, Boolean> likedMap = dataCacheUtil.isLikedBatch(userId, postIds);
-        Map<Long, Boolean> starredMap = getStarredMap(userId, postIds);
-        for (Post record : records) {
-            PostVO postVO = BeanUtil.copyProperties(record, PostVO.class);
-            postVO.setUsername(username);
-            postVO.setNickname(nickname);
-            postVO.setLikeCount(likeCounts.getOrDefault(record.getId(), 0));
-            postVO.setLiked(userId == null ? false : likedMap.getOrDefault(record.getId(), false));
-            postVO.setStarCount(record.getStarCount() == null ? 0 : record.getStarCount());
-            postVO.setStarred(starredMap.getOrDefault(record.getId(), false));
-            postVOS.add(postVO);
-        }
+        List<PostVO> postVOS = postHydrationHelper.hydrate(records, userId, !isSelf, null);
         return Result.ok(postVOS, postIPage.getTotal());
     }
 
@@ -477,15 +433,21 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
             return Result.error(MessageConstant.POST_NOT_EXIST);
         }
         boolean targetPrivate = Boolean.TRUE.equals(isPrivate);
-        if (!Objects.equals(post.getIsPrivate(), targetPrivate)) {
+        boolean wasPrivate = Boolean.TRUE.equals(post.getIsPrivate());
+        if (!Objects.equals(wasPrivate, targetPrivate)) {
             Post update = new Post();
             update.setId(id);
             update.setIsPrivate(targetPrivate);
             postMapper.updateById(update);
-            // 同步 ES（保留 ES 中的纯文本正文，不做整实体回写）
+            tagService.onPostPrivacyChanged(id, wasPrivate, targetPrivate);
+            categoryService.evictCategoryCache();
+            // 同步 ES（保留 ES 中的纯文本正文与标签，不做整实体覆盖）
             Post esPost = postElasticsearchRepository.findById(id).orElse(null);
             if (esPost != null) {
                 esPost.setIsPrivate(targetPrivate);
+                List<TagVO> tags = tagService.getTagsByPostIds(List.of(id)).getOrDefault(id, List.of());
+                esPost.setTagIds(tags.stream().map(TagVO::getId).toList());
+                esPost.setTagNames(tags.stream().map(TagVO::getName).toList());
                 postElasticsearchRepository.save(esPost);
             }
             long time = post.getCreateTime() != null
@@ -572,6 +534,9 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         } catch (Exception e) {
             log.error("删除帖子点赞数据失败", e);
         }
+        // 删除帖子标签关联及计数
+        tagService.onPostDeleted(id, Boolean.TRUE.equals(post.getIsPrivate()));
+        categoryService.evictCategoryCache();
         // 删除Elasticsearch的数据
         postElasticsearchRepository.deleteById(id);
 
@@ -716,44 +681,23 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         List<Post> posts = postMapper.selectBatchIds(ids);
         posts.forEach(p -> postMap.put(p.getId(), p));
 
-        // 批量读取点赞数与点赞状态（pipeline 一次往返）
-        Map<Long, Integer> likeCounts = dataCacheUtil.getLikeCounts(ids);
-        Map<Long, Boolean> likedMap = dataCacheUtil.isLikedBatch(userId, ids);
-        Map<Long, Boolean> starredMap = getStarredMap(userId, ids);
-
-        List<Long> userIds = posts.stream()
-                .filter(Post::getEnabled)
-                .map(Post::getUserId)
-                .filter(Objects::nonNull)
-                .distinct()
-                .toList();
-        Map<Long, User> userMap = new HashMap<>();
-        if (!userIds.isEmpty()) {
-            userMapper.selectBatchIds(userIds).forEach(u -> userMap.put(u.getId(), u));
-        }
-
-        List<PostVO> postVOS = new ArrayList<>();
+        // 黑名单作者：与本人互相不可见（读取期过滤，缓存里的旧条目也会被挡掉）
+        java.util.Set<Long> hiddenAuthors = blacklistUtil.hiddenUserIds(userId);
+        List<Post> eligiblePosts = new ArrayList<>();
         for (Long id : ids) {
             Post post = postMap.get(id);
-            if (post == null || !post.getEnabled()) {
+            if (post == null || !Boolean.TRUE.equals(post.getEnabled())) {
                 continue;
             }
-            // 私密帖子不进入任何信息流
             if (Boolean.TRUE.equals(post.getIsPrivate())) {
                 continue;
             }
-            PostVO postVO = BeanUtil.copyProperties(post, PostVO.class);
-            User author = userMap.get(post.getUserId());
-            if (author != null) {
-                postVO.setUsername(author.getUsername());
-                postVO.setNickname(author.getNickname());
+            if (post.getUserId() != null && hiddenAuthors.contains(post.getUserId())) {
+                continue;
             }
-            postVO.setLikeCount(likeCounts.getOrDefault(id, 0));
-            postVO.setLiked(userId == null ? false : likedMap.getOrDefault(id, false));
-            postVO.setStarCount(post.getStarCount() == null ? 0 : post.getStarCount());
-            postVO.setStarred(userId == null ? false : starredMap.getOrDefault(id, false));
-            postVOS.add(postVO);
+            eligiblePosts.add(post);
         }
+        List<PostVO> postVOS = postHydrationHelper.hydrate(eligiblePosts, userId, true, null);
         int newOffset = 1;
         double score = scores.getFirst();
         for (int i = 1; i < scores.size(); i++) {

@@ -8,6 +8,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.io.Serializable;
+import java.util.List;
 
 /**
  * @author e69d8e
@@ -35,4 +36,10 @@ public class PostDTO implements Serializable {
      * 是否设为私密（仅作者自己可见），默认公开
      */
     private Boolean isPrivate;
+
+    /**
+     * 帖子标签名称列表（最多5个）
+     */
+    @Size(max = 5, message = "最多选择5个标签")
+    private List<String> tags;
 }

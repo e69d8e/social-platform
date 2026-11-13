@@ -8,6 +8,7 @@ import com.li.socialplatform.common.constant.AuthorityConstant;
 import com.li.socialplatform.common.constant.KeyConstant;
 import com.li.socialplatform.common.constant.MessageConstant;
 import com.li.socialplatform.common.properties.SystemConstants;
+import com.li.socialplatform.common.utils.BlacklistUtil;
 import com.li.socialplatform.common.utils.RedisUtil;
 import com.li.socialplatform.common.utils.UserIdUtil;
 import com.li.socialplatform.common.utils.UserIntersetScoreUtil;
@@ -20,7 +21,9 @@ import com.li.socialplatform.server.mapper.CommentLikeRecordMapper;
 import com.li.socialplatform.pojo.vo.ChildrenVO;
 import com.li.socialplatform.pojo.vo.CommentUserVO;
 import com.li.socialplatform.pojo.vo.CommentVO;
+import com.li.socialplatform.server.repository.PostElasticsearchRepository;
 import com.li.socialplatform.server.service.ICommentService;
+import com.li.socialplatform.server.service.ITagService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.ZSetOperations;
@@ -47,6 +50,9 @@ public class CommentServiceImpl extends ServiceImpl<CommentMapper, Comment> impl
     private final UserIntersetScoreUtil userIntersetScoreUtil;
     private final PostMapper postMapper;
     private final CommentLikeRecordMapper commentLikeRecordMapper;
+    private final BlacklistUtil blacklistUtil;
+    private final ITagService tagService;
+    private final PostElasticsearchRepository postElasticsearchRepository;
 
     @Transactional
     @Override
@@ -62,6 +68,13 @@ public class CommentServiceImpl extends ServiceImpl<CommentMapper, Comment> impl
             return Result.error(MessageConstant.USER_NOT_ENABLED);
         }
         comment.setUserId(userId);
+        // 黑名单：看不见的帖子不允许评论（与私密/封禁帖同一套「不存在」文案）
+        Post target = postMapper.selectById(commentDTO.getPostId());
+        if (target == null
+                || !Boolean.TRUE.equals(target.getEnabled())
+                || blacklistUtil.isHidden(userId, target.getUserId())) {
+            return Result.error(MessageConstant.POST_NOT_EXIST);
+        }
         long timeMillis = System.currentTimeMillis();
 //        LocalDateTime now = LocalDateTime.now();
 //        comment.setCreateTime(now);
@@ -75,10 +88,23 @@ public class CommentServiceImpl extends ServiceImpl<CommentMapper, Comment> impl
                     .add(KeyConstant.COMMENT_KEY + commentDTO.getPostId(),
                             comment.getId(), timeMillis);
         }
-        // 用户兴趣+1
+        // 递增帖子评论数并更新兴趣画像（分类 +5、标签 +6）
+        postMapper.update(null, new LambdaUpdateWrapper<Post>()
+                .eq(Post::getId, comment.getPostId())
+                .setSql("comment_count = comment_count + 1"));
         Post post = postMapper.selectById(comment.getPostId());
         if (post != null) {
-            userIntersetScoreUtil.changeScore(userId, post.getCategoryId(), 5);
+            List<Long> tagIds = tagService.getTagIdsByPostIds(List.of(post.getId()))
+                    .getOrDefault(post.getId(), List.of());
+            userIntersetScoreUtil.recordPostInteraction(userId, post.getCategoryId(), tagIds, 5, 6);
+            try {
+                postElasticsearchRepository.findById(post.getId()).ifPresent(esPost -> {
+                    esPost.setCommentCount(post.getCommentCount());
+                    postElasticsearchRepository.save(esPost);
+                });
+            } catch (Exception e) {
+                log.warn("同步评论数到 ES 失败: postId={}, error={}", post.getId(), e.getMessage());
+            }
         }
         return Result.ok(MessageConstant.ADD_COMMENT_SUCCESS, "");
     }
@@ -259,6 +285,20 @@ public class CommentServiceImpl extends ServiceImpl<CommentMapper, Comment> impl
         commentLikeRecordMapper.delete(new LambdaQueryWrapper<CommentLikeRecord>()
                 .in(CommentLikeRecord::getCommentId, targetIds));
         commentMapper.deleteBatchIds(targetIds);
+        postMapper.update(null, new LambdaUpdateWrapper<Post>()
+                .eq(Post::getId, comment.getPostId())
+                .setSql("comment_count = GREATEST(comment_count - " + targetIds.size() + ", 0)"));
+        Post updatedPost = postMapper.selectById(comment.getPostId());
+        if (updatedPost != null) {
+            try {
+                postElasticsearchRepository.findById(updatedPost.getId()).ifPresent(esPost -> {
+                    esPost.setCommentCount(updatedPost.getCommentCount());
+                    postElasticsearchRepository.save(esPost);
+                });
+            } catch (Exception e) {
+                log.warn("同步删除后评论数到 ES 失败: postId={}, error={}", updatedPost.getId(), e.getMessage());
+            }
+        }
         // 一级评论计数与分页游标都在 ZSet 里，必须同步移除
         redisUtil.zsets().remove(KeyConstant.COMMENT_KEY + comment.getPostId(), commentId);
         return Result.ok(MessageConstant.DELETE_SUCCESS, "");

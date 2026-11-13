@@ -33,6 +33,10 @@ public interface IUserService extends IService<User> {
      */
     Result listPost(String keyword, Integer pageNum, Integer pageSize, Integer categoryId, boolean record);
 
+    default Result listPost(String keyword, Integer pageNum, Integer pageSize, Integer categoryId, Long tagId, boolean record) {
+        return listPost(keyword, pageNum, pageSize, categoryId, record);
+    }
+
     /**
      * 搜索用户
      *

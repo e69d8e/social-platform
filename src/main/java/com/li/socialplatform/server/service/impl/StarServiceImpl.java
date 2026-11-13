@@ -7,8 +7,10 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.li.socialplatform.common.constant.MessageConstant;
+import com.li.socialplatform.common.utils.BlacklistUtil;
 import com.li.socialplatform.common.utils.DataCacheUtil;
 import com.li.socialplatform.common.utils.UserIdUtil;
+import com.li.socialplatform.common.utils.UserIntersetScoreUtil;
 import com.li.socialplatform.pojo.entity.Post;
 import com.li.socialplatform.pojo.entity.Result;
 import com.li.socialplatform.pojo.entity.StarRecord;
@@ -18,6 +20,7 @@ import com.li.socialplatform.server.mapper.PostMapper;
 import com.li.socialplatform.server.mapper.StarRecordMapper;
 import com.li.socialplatform.server.mapper.UserMapper;
 import com.li.socialplatform.server.service.IStarService;
+import com.li.socialplatform.server.service.ITagService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -41,6 +44,9 @@ public class StarServiceImpl extends ServiceImpl<StarRecordMapper, StarRecord> i
     private final UserMapper userMapper;
     private final UserIdUtil userIdUtil;
     private final DataCacheUtil dataCacheUtil;
+    private final BlacklistUtil blacklistUtil;
+    private final UserIntersetScoreUtil userIntersetScoreUtil;
+    private final ITagService tagService;
 
     @Transactional
     @Override
@@ -53,6 +59,9 @@ public class StarServiceImpl extends ServiceImpl<StarRecordMapper, StarRecord> i
         // 他人私密帖对当前用户不可见，自然也不允许收藏（避免通过收藏接口探测私密帖存在性）
         if (Boolean.TRUE.equals(post.getIsPrivate())
                 && !Objects.equals(userId, post.getUserId())) {
+            return Result.error(MessageConstant.POST_NOT_EXIST);
+        }
+        if (blacklistUtil.isHidden(userId, post.getUserId())) {
             return Result.error(MessageConstant.POST_NOT_EXIST);
         }
         StarRecord existing = starRecordMapper.selectOne(new LambdaQueryWrapper<StarRecord>()
@@ -74,6 +83,13 @@ public class StarServiceImpl extends ServiceImpl<StarRecordMapper, StarRecord> i
                     .setSql("star_count = star_count + 1"));
             starred = true;
         }
+        List<Long> tagIds = tagService.getTagIdsByPostIds(List.of(postId)).getOrDefault(postId, List.of());
+        userIntersetScoreUtil.recordPostInteraction(
+                userId,
+                post.getCategoryId(),
+                tagIds,
+                starred ? 8 : -8,
+                starred ? 10 : -10);
         Integer count = postMapper.selectById(postId).getStarCount();
         return Result.ok(starred ? "收藏成功" : "已取消收藏", count);
     }
@@ -81,9 +97,19 @@ public class StarServiceImpl extends ServiceImpl<StarRecordMapper, StarRecord> i
     @Override
     public Result listMyStars(Integer pageNum, Integer pageSize) {
         Long userId = userIdUtil.getUserId();
+        // 黑名单作者的帖子必须从 SQL 层排除：否则分页 total 仍把它们算进去，
+        // 出现「共 N 篇但只列出 N-1 条」的错位
+        Set<Long> hidden = blacklistUtil.hiddenUserIds(userId);
+        List<Long> blockedPostIds = hidden.isEmpty()
+                ? List.of()
+                : postMapper.selectList(new LambdaQueryWrapper<Post>()
+                        .select(Post::getId)
+                        .in(Post::getUserId, hidden))
+                .stream().map(Post::getId).toList();
         IPage<StarRecord> page = starRecordMapper.selectPage(new Page<>(pageNum, pageSize),
                 new LambdaQueryWrapper<StarRecord>()
                         .eq(StarRecord::getUserId, userId)
+                        .notIn(!blockedPostIds.isEmpty(), StarRecord::getPostId, blockedPostIds)
                         .orderByDesc(StarRecord::getCreateTime));
         List<Long> postIds = page.getRecords().stream().map(StarRecord::getPostId).toList();
         if (postIds.isEmpty()) {

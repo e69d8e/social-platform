@@ -49,4 +49,7 @@ public class UserVO implements Serializable {
 
     private Boolean followed;
     private Integer fansCount;
+
+    /** 我是否拉黑了该用户（仅拉黑者视角为 true，被拉黑方拿不到这个信号） */
+    private Boolean blocked;
 }

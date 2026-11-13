@@ -5,8 +5,10 @@ import com.li.socialplatform.common.constant.CacheTtl;
 import com.li.socialplatform.common.constant.KeyConstant;
 import com.li.socialplatform.pojo.entity.Follow;
 import com.li.socialplatform.pojo.entity.LikeRecord;
+import com.li.socialplatform.pojo.entity.Post;
 import com.li.socialplatform.server.mapper.FollowMapper;
 import com.li.socialplatform.server.mapper.LikeMapper;
+import com.li.socialplatform.server.mapper.PostMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -32,6 +34,7 @@ public class DataCacheUtil {
     private final RedisUtil redisUtil;
     private final LikeMapper likeMapper;
     private final FollowMapper followMapper;
+    private final PostMapper postMapper;
 
     // ==================== 点赞 ====================
 
@@ -99,8 +102,8 @@ public class DataCacheUtil {
                 missed.add(ids.get(i));
             }
         }
-        for (Long id : missed) {
-            result.put(id, loadLikeDataFromDB(id));
+        if (!missed.isEmpty()) {
+            loadLikeDataBatchFromDB(missed, result);
         }
         return result;
     }
@@ -112,6 +115,36 @@ public class DataCacheUtil {
         }
     }
 
+    /** 批量回源加载多个帖子的点赞数据并回填 Redis */
+    private void loadLikeDataBatchFromDB(List<Long> postIds, Map<Long, Integer> out) {
+        List<LikeRecord> records = likeMapper.selectList(
+                new LambdaQueryWrapper<LikeRecord>().in(LikeRecord::getPostId, postIds));
+        Map<Long, List<Long>> likerIdsByPost = new HashMap<>();
+        for (LikeRecord r : records) {
+            if (r.getPostId() != null && r.getUserId() != null) {
+                likerIdsByPost.computeIfAbsent(r.getPostId(), k -> new ArrayList<>()).add(r.getUserId());
+            }
+        }
+        Map<Long, Integer> dbCounts = new HashMap<>();
+        postMapper.selectBatchIds(postIds).forEach(p ->
+                dbCounts.put(p.getId(), p.getLikeCount() == null ? 0 : Math.max(0, p.getLikeCount())));
+
+        redisUtil.pipeline(ops -> {
+            for (Long postId : postIds) {
+                List<Long> userIds = likerIdsByPost.getOrDefault(postId, List.of()).stream().distinct().toList();
+                int effectiveCount = Math.max(userIds.size(), dbCounts.getOrDefault(postId, 0));
+                out.put(postId, effectiveCount);
+                String countKey = KeyConstant.LIKE_COUNT + postId;
+                ops.opsForValue().set(countKey, effectiveCount, CacheTtl.DEFAULT_DAYS, TimeUnit.DAYS);
+                if (!userIds.isEmpty()) {
+                    String setKey = KeyConstant.LIKE_KEY + postId;
+                    ops.opsForSet().add(setKey, userIds.toArray());
+                    ops.expire(setKey, CacheTtl.DEFAULT_DAYS, TimeUnit.DAYS);
+                }
+            }
+        });
+    }
+
     /** 从 DB 加载帖子点赞数据并回填缓存，返回点赞数 */
     private int loadLikeDataFromDB(Long postId) {
         String setKey = KeyConstant.LIKE_KEY + postId;
@@ -119,15 +152,22 @@ public class DataCacheUtil {
 
         List<LikeRecord> records = likeMapper.selectList(
                 new LambdaQueryWrapper<LikeRecord>().eq(LikeRecord::getPostId, postId));
+        List<Long> distinctUsers = records.stream()
+                .map(LikeRecord::getUserId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .toList();
+        Post post = postMapper.selectById(postId);
+        int postLikeCount = (post != null && post.getLikeCount() != null) ? Math.max(0, post.getLikeCount()) : 0;
+        int effectiveCount = Math.max(distinctUsers.size(), postLikeCount);
 
-        redisUtil.set(countKey, records.size(), CacheTtl.DEFAULT_DAYS, TimeUnit.DAYS);
-        if (!records.isEmpty()) {
-            redisUtil.sets().add(setKey, records.stream()
-                    .map(r -> (Object) r.getUserId()).distinct().toArray());
+        redisUtil.set(countKey, effectiveCount, CacheTtl.DEFAULT_DAYS, TimeUnit.DAYS);
+        if (!distinctUsers.isEmpty()) {
+            redisUtil.sets().add(setKey, distinctUsers.toArray());
             redisUtil.expire(setKey, CacheTtl.DEFAULT_DAYS, TimeUnit.DAYS);
         }
-        log.debug("从DB加载帖子 {} 点赞数据: {} 条", postId, records.size());
-        return records.size();
+        log.debug("从DB加载帖子 {} 点赞数据: record={}, effective={}", postId, distinctUsers.size(), effectiveCount);
+        return effectiveCount;
     }
 
     public void setLikeTTL(Long postId) {

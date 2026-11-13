@@ -9,6 +9,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.io.Serializable;
+import java.time.LocalDateTime;
 
 /**
  * @author e69d8e
@@ -32,9 +33,13 @@ public class UserInterestScore implements Serializable {
     @TableField("score")
     private Integer score;
 
+    @TableField("update_time")
+    private LocalDateTime updateTime;
+
     public UserInterestScore(Long userId, Integer categoryId, Integer score) {
         this.userId = userId;
         this.categoryId = categoryId;
         this.score = score;
+        this.updateTime = LocalDateTime.now();
     }
 }

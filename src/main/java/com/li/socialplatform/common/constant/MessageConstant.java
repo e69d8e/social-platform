@@ -10,6 +10,11 @@ public class MessageConstant {
     public static final String USERNAME_FORMAT_ERROR = "用户名格式错误";
     public static final String PASSWORD_FORMAT_ERROR = "密码格式错误";
     public static final String OLD_PASSWORD_REQUIRED = "请输入原密码";
+    public static final String CANNOT_BLOCK_SELF = "不能拉黑自己";
+    public static final String BLACKLIST_FULL = "黑名单已满，请先解除部分拉黑";
+    public static final String BLOCK_SUCCESS = "已拉黑，对方将无法查看你的内容";
+    public static final String UNBLOCK_SUCCESS = "已解除拉黑";
+    public static final String MESSAGE_REJECTED = "对方不接收你的私信";
     public static final String OLD_PASSWORD_ERROR = "原密码不正确";
     public static final String USER_PASSWORD_ERROR = "密码错误";
     public static final String LOGIN_FAILED = "用户名或密码错误";
@@ -72,4 +77,15 @@ public class MessageConstant {
     public static final String CAPTCHA_VERIFY_FAIL = "验证不通过";
     public static final String CAPTCHA_TIMING_ERROR = "验证异常，请重试";
     public static final String CAPTCHA_NOT_VERIFIED = "请先完成滑块验证";
+
+    // 分类、标签与推荐反馈
+    public static final String CATEGORY_NOT_EXIST = "分类不存在";
+    public static final String CATEGORY_NAME_EXISTS = "分类名称已存在";
+    public static final String CATEGORY_CANNOT_DISABLE_DEFAULT = "默认分类不可禁用";
+    public static final String TAG_LIMIT_EXCEEDED = "每篇帖子最多选择5个标签";
+    public static final String TAG_TOO_LONG = "单个标签长度不能超过20个字符";
+    public static final String TAG_NOT_EXIST = "标签不存在";
+    public static final String FEEDBACK_INVALID_TYPE = "不支持的反馈类型";
+    public static final String FEEDBACK_SUCCESS = "已收到反馈，将减少同类内容推荐";
+    public static final String FEEDBACK_UNDO_SUCCESS = "已撤销该偏好设置";
 }

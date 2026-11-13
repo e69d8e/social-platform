@@ -9,12 +9,14 @@ import com.li.socialplatform.pojo.entity.Category;
 import com.li.socialplatform.pojo.entity.HomePost;
 import com.li.socialplatform.pojo.entity.Post;
 import com.li.socialplatform.pojo.entity.User;
+import com.li.socialplatform.pojo.vo.TagVO;
 import com.li.socialplatform.server.mapper.CategoryMapper;
 import com.li.socialplatform.server.mapper.HomePostMapper;
 import com.li.socialplatform.server.mapper.PostMapper;
 import com.li.socialplatform.server.mapper.UserMapper;
 import com.li.socialplatform.server.repository.PostElasticsearchRepository;
 import com.li.socialplatform.server.repository.UserElasticsearchRepository;
+import com.li.socialplatform.server.service.ITagService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;
@@ -48,6 +50,7 @@ public class DataInitializer implements ApplicationRunner {
     private final UserElasticsearchRepository userElasticsearchRepository;
     private final ElasticsearchOperations elasticsearchOperations;
     private final RedisUtil redisUtil;
+    private final ITagService tagService;
 
     @Override
     public void run(ApplicationArguments args) {
@@ -82,7 +85,10 @@ public class DataInitializer implements ApplicationRunner {
     private void initHomePostsAndRedis() {
         Long homeCount = homePostMapper.selectCount(null);
         List<Post> allPosts = postMapper.selectList(
-                new LambdaQueryWrapper<Post>().eq(Post::getEnabled, true).orderByDesc(Post::getCreateTime));
+                new LambdaQueryWrapper<Post>()
+                        .eq(Post::getEnabled, true)
+                        .and(w -> w.eq(Post::getIsPrivate, false).or().isNull(Post::getIsPrivate))
+                        .orderByDesc(Post::getCreateTime));
 
         if (allPosts.isEmpty()) {
             return;
@@ -126,11 +132,13 @@ public class DataInitializer implements ApplicationRunner {
 
     private void initElasticsearch() {
         try {
-            // 1. 初始化 Post 索引与 Mapping（配置 IK 中文分词器）
+            // 1. 初始化 Post 索引与 Mapping（配置 IK 中文分词器及新增标签字段）
             IndexOperations postIndexOps = elasticsearchOperations.indexOps(Post.class);
             if (!postIndexOps.exists()) {
                 log.info("检测到 Elasticsearch post 索引不存在，正在自动创建索引并配置 IK 分词 Mapping...");
                 postIndexOps.createWithMapping();
+            } else {
+                postIndexOps.putMapping();
             }
 
             // 2. 初始化 User 索引与 Mapping
@@ -145,6 +153,8 @@ public class DataInitializer implements ApplicationRunner {
             List<Post> posts = postMapper.selectList(new LambdaQueryWrapper<Post>().eq(Post::getEnabled, true));
             if (esPostCount == 0 && !posts.isEmpty()) {
                 log.info("检测到 Elasticsearch 帖子数据为空，自动同步 {} 条帖子到 ES...", posts.size());
+                List<Long> postIds = posts.stream().map(Post::getId).toList();
+                Map<Long, List<TagVO>> tagMap = tagService.getTagsByPostIds(postIds);
                 List<Post> esPosts = posts.stream().map(p -> {
                     Post ep = new Post();
                     ep.setId(p.getId());
@@ -158,7 +168,11 @@ public class DataInitializer implements ApplicationRunner {
                     ep.setIsPrivate(Boolean.TRUE.equals(p.getIsPrivate()));
                     ep.setStarCount(p.getStarCount() != null ? p.getStarCount() : 0);
                     ep.setLikeCount(p.getLikeCount() != null ? p.getLikeCount() : 0);
+                    ep.setCommentCount(p.getCommentCount() != null ? p.getCommentCount() : 0);
                     ep.setViewCount(p.getViewCount() != null ? p.getViewCount() : 0);
+                    List<TagVO> postTags = tagMap.getOrDefault(p.getId(), List.of());
+                    ep.setTagIds(postTags.stream().map(TagVO::getId).toList());
+                    ep.setTagNames(postTags.stream().map(TagVO::getName).toList());
                     return ep;
                 }).toList();
                 postElasticsearchRepository.saveAll(esPosts);

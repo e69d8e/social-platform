@@ -1,10 +1,13 @@
 package com.li.socialplatform.server.controller;
 
+import com.li.socialplatform.pojo.dto.CategoryDTO;
 import com.li.socialplatform.pojo.entity.Result;
 import com.li.socialplatform.server.service.IAdminService;
+import com.li.socialplatform.server.service.ICategoryService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import lombok.RequiredArgsConstructor;
@@ -23,6 +26,7 @@ import org.springframework.web.bind.annotation.*;
 public class AdminController {
 
     private final IAdminService adminService;
+    private final ICategoryService categoryService;
 
     @PutMapping("/ban/{id}")
     @Operation(summary = "封禁/解封用户", description = "切换用户的封禁状态")
@@ -67,5 +71,29 @@ public class AdminController {
     public Result getDashboardStats(
             @Parameter(description = "统计天数，默认30天") @RequestParam(required = false) Integer days) {
         return adminService.getDashboardStats(days);
+    }
+
+    @GetMapping("/category")
+    @Operation(summary = "分类管理列表", description = "获取全部分类（含已停用分类）及其帖子统计")
+    public Result listAllCategories() {
+        return categoryService.listCategories(true);
+    }
+
+    @PostMapping("/category")
+    @Operation(summary = "新建分类", description = "创建新的社区板块分类")
+    public Result createCategory(@Valid @RequestBody CategoryDTO dto) {
+        return categoryService.createCategory(dto);
+    }
+
+    @PutMapping("/category")
+    @Operation(summary = "更新分类", description = "编辑分类名称、简介、图标、主题色与排序")
+    public Result updateCategory(@Valid @RequestBody CategoryDTO dto) {
+        return categoryService.updateCategory(dto);
+    }
+
+    @PutMapping("/category/{id}/toggle")
+    @Operation(summary = "切换分类启用状态", description = "启用或停用指定分类（默认分类不可停用）")
+    public Result toggleCategory(@Parameter(description = "分类ID") @PathVariable Integer id) {
+        return categoryService.toggleCategoryEnabled(id);
     }
 }

@@ -9,9 +9,12 @@ import org.springframework.data.elasticsearch.annotations.DateFormat;
 import org.springframework.data.elasticsearch.annotations.Document;
 import org.springframework.data.elasticsearch.annotations.Field;
 import org.springframework.data.elasticsearch.annotations.FieldType;
+import org.springframework.data.elasticsearch.annotations.InnerField;
+import org.springframework.data.elasticsearch.annotations.MultiField;
 
 import java.io.Serializable;
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Document(indexName = "post")
 @TableName("post")
@@ -66,6 +69,23 @@ public class Post implements Serializable {
     private Integer starCount;
 
     @Field(type = FieldType.Integer)
+    @TableField("comment_count")
+    private Integer commentCount;
+
+    @Field(type = FieldType.Integer)
     @TableField("view_count")
     private Integer viewCount;
+
+    /** ES 索引专用的标签 ID 列表 */
+    @TableField(exist = false)
+    @Field(type = FieldType.Keyword)
+    private List<Long> tagIds;
+
+    /** ES 索引专用的标签名称列表 */
+    @TableField(exist = false)
+    @MultiField(
+            mainField = @Field(type = FieldType.Text, analyzer = "ik_smart"),
+            otherFields = @InnerField(suffix = "keyword", type = FieldType.Keyword)
+    )
+    private List<String> tagNames;
 }

@@ -8,6 +8,7 @@ import lombok.NoArgsConstructor;
 
 import java.io.Serializable;
 import java.time.LocalDateTime;
+import java.util.List;
 
 /**
  * @author e69d8e
@@ -32,7 +33,11 @@ public class PostVO implements Serializable {
 
     private String content;
 
+    private Integer categoryId;
+
     private String categoryName;
+
+    private List<TagVO> tags;
 
     private String cover;
 
@@ -47,9 +52,13 @@ public class PostVO implements Serializable {
 
     private Integer starCount; // 收藏数
 
+    private Integer commentCount; // 评论数
+
     private Boolean isPrivate; // 是否私密
 
     private Integer viewCount;
 
     private Boolean enabled;
+
+    private String recommendReason; // 推荐理由
 }

@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.li.socialplatform.common.constant.KeyConstant;
 import com.li.socialplatform.common.constant.MessageConstant;
 import com.li.socialplatform.common.utils.AsyncTaskUtil;
+import com.li.socialplatform.common.utils.BlacklistUtil;
 import com.li.socialplatform.common.utils.DataCacheUtil;
 import com.li.socialplatform.common.utils.RedisUtil;
 import com.li.socialplatform.common.utils.UserIdUtil;
@@ -42,6 +43,7 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
     private final UserIdUtil userIdUtil;
     private final AsyncTaskUtil asyncTaskUtil;
     private final DataCacheUtil dataCacheUtil;
+    private final BlacklistUtil blacklistUtil;
 
     @Override
     public Result follow(Long id) {
@@ -53,6 +55,10 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
             return Result.error(MessageConstant.USER_CANNOT_FOLLOW_SELF);
         }
         if (userMapper.selectById(id) == null) {
+            return Result.error(MessageConstant.USER_NOT_EXIST);
+        }
+        // 黑名单：拉黑关系下不能关注（与「用户不存在」同文案，避免暴露拉黑事实）
+        if (blacklistUtil.isHidden(userId, id)) {
             return Result.error(MessageConstant.USER_NOT_EXIST);
         }
         // Redis 去重：检查是否已关注（缓存未命中时自动从 DB 加载）
