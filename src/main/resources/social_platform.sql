@@ -817,3 +817,38 @@ CREATE TABLE IF NOT EXISTS `comment_like_record`
     KEY `idx_comment_id` (`comment_id`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4 COMMENT ='评论点赞记录表';
+
+DROP TABLE IF EXISTS `notification`;
+
+# 互动通知表（点赞/评论/回复/关注/系统）
+CREATE TABLE IF NOT EXISTS `notification`
+(
+    `id`          BIGINT       NOT NULL COMMENT '通知ID',
+    `user_id`     BIGINT       NOT NULL COMMENT '接收者用户ID',
+    `actor_id`    BIGINT       NULL COMMENT '触发者用户ID（系统通知为NULL）',
+    `type`        VARCHAR(16)  NOT NULL COMMENT '通知类型：like/comment/reply/follow/system',
+    `post_id`     BIGINT       NULL COMMENT '关联帖子ID',
+    `comment_id`  BIGINT       NULL COMMENT '关联评论ID',
+    `content`     VARCHAR(255) NULL COMMENT '附加内容摘要',
+    `is_read`     TINYINT(1)   NOT NULL DEFAULT 0 COMMENT '是否已读',
+    `create_time` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_user_read_time` (`user_id`, `is_read`, `create_time` DESC)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4 COMMENT ='互动通知表';
+
+-- 帖子表新增草稿/定时发布/置顶字段
+ALTER TABLE `post`
+    ADD COLUMN IF NOT EXISTS `status`     VARCHAR(16) NOT NULL DEFAULT 'published' COMMENT '状态：draft/scheduled/published',
+    ADD COLUMN IF NOT EXISTS `publish_time` DATETIME  NULL COMMENT '定时发布时间（仅scheduled有效）',
+    ADD COLUMN IF NOT EXISTS `is_top`     TINYINT(1)  NOT NULL DEFAULT 0 COMMENT '是否在个人主页置顶';
+
+-- 用户表新增信用分和徽章字段
+ALTER TABLE `user`
+    ADD COLUMN IF NOT EXISTS `credit_score` INT        NOT NULL DEFAULT 100 COMMENT '用户信用分',
+    ADD COLUMN IF NOT EXISTS `badge`        VARCHAR(64) NULL COMMENT '用户徽章（JSON数组或逗号分隔）';
+
+-- 帖子表新增精选标记和敏感标记
+ALTER TABLE `post`
+    ADD COLUMN IF NOT EXISTS `is_featured`  TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否每周精选',
+    ADD COLUMN IF NOT EXISTS `is_sensitive` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '是否命中敏感词';

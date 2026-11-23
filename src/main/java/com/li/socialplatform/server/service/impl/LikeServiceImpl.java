@@ -15,6 +15,7 @@ import com.li.socialplatform.pojo.entity.LikeRecord;
 import com.li.socialplatform.pojo.entity.Post;
 import com.li.socialplatform.pojo.entity.Result;
 import com.li.socialplatform.server.service.ILikeService;
+import com.li.socialplatform.server.service.INotificationService;
 import com.li.socialplatform.server.service.ITagService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -40,6 +41,7 @@ public class LikeServiceImpl extends ServiceImpl<LikeMapper, LikeRecord> impleme
     private final DataCacheUtil dataCacheUtil;
     private final BlacklistUtil blacklistUtil;
     private final ITagService tagService;
+    private final INotificationService notificationService;
 
     @Override
     public Result like(Long postId) {
@@ -79,6 +81,11 @@ public class LikeServiceImpl extends ServiceImpl<LikeMapper, LikeRecord> impleme
             asyncTaskUtil.asyncInsertLikeRecord(postId, userId);
             if (post != null) {
                 userIntersetScoreUtil.recordPostInteraction(userId, post.getCategoryId(), tagIds, 10, 12);
+                // 点赞通知（异步，不影响主流程）
+                notificationService.sendNotification(
+                        post.getUserId(), userId,
+                        com.li.socialplatform.pojo.entity.Notification.TYPE_LIKE,
+                        postId, null, null);
             }
         }
         // 续期 TTL

@@ -96,4 +96,10 @@ public class AdminController {
     public Result toggleCategory(@Parameter(description = "分类ID") @PathVariable Integer id) {
         return categoryService.toggleCategoryEnabled(id);
     }
+
+    @PutMapping("/post/{id}/feature")
+    @Operation(summary = "精选/取消精选帖子", description = "切换帖子的精选状态")
+    public Result toggleFeaturePost(@PathVariable Long id) {
+        return adminService.toggleFeaturePost(id);
+    }
 }

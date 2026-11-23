@@ -84,6 +84,7 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
     private final ICategoryService categoryService;
     private final PostHydrationHelper postHydrationHelper;
     private final PostTagMapper postTagMapper;
+    private final SensitiveWordUtil sensitiveWordUtil;
 
     /** 默认分类ID：social_platform.sql 中 category 表种子数据 id=1 为“其他” */
     private static final Integer DEFAULT_CATEGORY_ID = 1;
@@ -111,8 +112,20 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         if (postDTO.getContent() == null || postDTO.getContent().isEmpty()) {
             return Result.error(MessageConstant.CONTENT_IS_NULL);
         }
-        Post post = new Post();
-        post.setId(postDTO.getId());
+        // 编辑草稿/定时帖：id 已存在时在原记录上更新，避免重复插入
+        Post existing = postDTO.getId() == null ? null : postMapper.selectById(postDTO.getId());
+        if (existing != null) {
+            if (!Objects.equals(existing.getUserId(), id)) {
+                return Result.error(MessageConstant.POST_NOT_EXIST);
+            }
+            if (!"draft".equals(existing.getStatus()) && !"scheduled".equals(existing.getStatus())) {
+                return Result.error("只能编辑草稿或定时帖子");
+            }
+        }
+        Post post = existing != null ? existing : new Post();
+        if (existing == null) {
+            post.setId(postDTO.getId());
+        }
         post.setUserId(id);
         String title = postDTO.getTitle();
         // 限制帖子标题长度
@@ -148,15 +161,45 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         boolean isPrivate = Boolean.TRUE.equals(postDTO.getIsPrivate());
         post.setIsPrivate(isPrivate);
         post.setCommentCount(0);
-        postMapper.insert(post);
+        // 处理发布类型：草稿/定时/立即
+        String publishType = postDTO.getPublishType() != null ? postDTO.getPublishType() : "now";
+        post.setStatus("draft".equals(publishType) ? "draft"
+                : "schedule".equals(publishType) ? "scheduled" : "published");
+        post.setPublishTime(null);
+        if ("schedule".equals(publishType) && postDTO.getPublishTime() != null) {
+            post.setPublishTime(java.time.LocalDateTime.parse(postDTO.getPublishTime(),
+                    java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm")));
+        }
+        post.setIsTop(false);
+        post.setIsFeatured(false);
+        // 敏感词检测
+        int riskLevel = sensitiveWordUtil.checkRiskLevel(title + " " + content);
+        post.setIsSensitive(riskLevel);
+        if (riskLevel >= 3) {
+            return Result.error("内容包含违规信息，请修改后重试");
+        }
+        if (existing != null) {
+            postMapper.updateById(post);
+        } else {
+            postMapper.insert(post);
+        }
+        // 草稿不进入任何流，直接返回
+        if ("draft".equals(post.getStatus())) {
+            log.info("用户 {} 保存了草稿 {}", id, post.getId());
+            return Result.ok("草稿已保存", "");
+        }
         List<TagVO> boundTags = tagService.bindPostTags(post.getId(), targetCategoryId, normalizedTags, isPrivate);
-        log.info("用户 {} 发表了帖子 {}（私密: {}）", id, post.getId(), isPrivate);
+        log.info("用户 {} 发表了帖子 {}（私密: {}，状态: {}）", id, post.getId(), isPrivate, post.getStatus());
         long time = System.currentTimeMillis();
-        // 将帖子添加到缓存中
-        redisUtil.zsets().add(KeyConstant.POST_LIST_KEY, post.getId(), time);
-        redisUtil.zsets().add(KeyConstant.POST_KEY + id, post.getId(), time);
+        // 定时帖子不进入推荐流，等定时任务发布时再入流
+        boolean isScheduled = "scheduled".equals(post.getStatus());
+        if (!isScheduled) {
+            // 将帖子添加到缓存中
+            redisUtil.zsets().add(KeyConstant.POST_LIST_KEY, post.getId(), time);
+            redisUtil.zsets().add(KeyConstant.POST_KEY + id, post.getId(), time);
+        }
         // 私密帖子不进入首页推荐流，也不推送给粉丝
-        if (!isPrivate) {
+        if (!isPrivate && !isScheduled) {
             // 将帖子添加到首页帖子表
             HomePost homePost = new HomePost();
             homePost.setPostId(post.getId());
@@ -185,16 +228,65 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         post.setEnabled(true);
         post.setTagIds(boundTags.stream().map(TagVO::getId).toList());
         post.setTagNames(boundTags.stream().map(TagVO::getName).toList());
-        // 转换为纯文本
-        String text = HtmlUtils.htmlToPlainText(postDTO.getContent());
-        post.setContent(text);
-        // 添加到ES中
-        postElasticsearchRepository.save(post);
-        if (!isPrivate) {
+        if (!isScheduled) {
+            // 转换为纯文本
+            String text = HtmlUtils.htmlToPlainText(postDTO.getContent());
+            post.setContent(text);
+            // 添加到ES中
+            postElasticsearchRepository.save(post);
+        }
+        if (!isPrivate && !isScheduled) {
             categoryService.evictCategoryCache();
             userIntersetScoreUtil.recordPostInteraction(id, targetCategoryId, post.getTagIds(), 3, 4);
         }
-        return Result.ok(MessageConstant.PUBLISH_SUCCESS, "");
+        return Result.ok(isScheduled ? "定时发布已设置" : MessageConstant.PUBLISH_SUCCESS, "");
+    }
+
+    @Transactional
+    @Override
+    public Result publishDraft(Long id) {
+        Long userId = userIdUtil.getUserId();
+        Post post = postMapper.selectById(id);
+        if (post == null || !Objects.equals(post.getUserId(), userId) || !Boolean.TRUE.equals(post.getEnabled())) {
+            return Result.error(MessageConstant.POST_NOT_EXIST);
+        }
+        if (!"draft".equals(post.getStatus()) && !"scheduled".equals(post.getStatus())) {
+            return Result.error("该帖子不是草稿");
+        }
+
+        post.setStatus("published");
+        post.setPublishTime(null);
+        postMapper.updateById(post);
+
+        long time = System.currentTimeMillis();
+        redisUtil.zsets().add(KeyConstant.POST_LIST_KEY, post.getId(), time);
+        redisUtil.zsets().add(KeyConstant.POST_KEY + post.getUserId(), post.getId(), time);
+
+        if (!Boolean.TRUE.equals(post.getIsPrivate())) {
+            HomePost homePost = new HomePost();
+            homePost.setPostId(post.getId());
+            homePost.setUserId(post.getUserId());
+            homePostMapper.insert(homePost);
+            redisUtil.zsets().add(KeyConstant.HOME_POST_LIST_KEY, post.getId(), time);
+            redisUtil.expire(KeyConstant.HOME_POST_LIST_KEY, CacheTtl.DEFAULT_DAYS, TimeUnit.DAYS);
+
+            List<Long> fanIds = getFanIds(post.getUserId());
+            if (!fanIds.isEmpty()) {
+                redisUtil.pipeline(ops -> {
+                    for (Long fanId : fanIds) {
+                        ops.opsForZSet().add(KeyConstant.POST_LIST_KEY + fanId, post.getId(), time);
+                    }
+                });
+                asyncTaskUtil.asyncInsertUserInbox(fanIds, post.getId(), post.getUserId());
+            }
+            categoryService.evictCategoryCache();
+            userIntersetScoreUtil.recordPostInteraction(post.getUserId(), post.getCategoryId(), post.getTagIds(), 3, 4);
+        }
+
+        Post esPost = BeanUtil.copyProperties(post, Post.class);
+        esPost.setContent(HtmlUtils.htmlToPlainText(post.getContent()));
+        postElasticsearchRepository.save(esPost);
+        return Result.ok("发布成功");
     }
 
     @Override
@@ -206,8 +298,15 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         // 获取当前用户
         User loginUser = userMapper.selectOne(new LambdaQueryWrapper<User>().eq(User::getUsername, getCurrentUsername()));
         Long userId = userIdUtil.getUserId();
+        boolean isModerator = loginUser != null
+                && (AuthorityConstant.REVIEWER.equals(loginUser.getAuthorityId()) || AuthorityConstant.ADMIN.equals(loginUser.getAuthorityId()));
+        boolean isOwner = Objects.equals(userId, post.getUserId());
+        // 草稿/定时帖仅作者本人或管理端可预览，避免未发布内容公开泄露
+        if (!"published".equals(post.getStatus()) && !isOwner && !isModerator) {
+            return Result.error(MessageConstant.POST_NOT_EXIST);
+        }
         if (loginUser != null) {
-            if (!post.getEnabled() && !AuthorityConstant.REVIEWER.equals(loginUser.getAuthorityId()) && !AuthorityConstant.ADMIN.equals(loginUser.getAuthorityId())) {
+            if (!post.getEnabled() && !isModerator) {
                 return Result.error(MessageConstant.POST_NOT_EXIST);
             }
         } else {
@@ -220,10 +319,8 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
             return Result.error(MessageConstant.POST_NOT_EXIST);
         }
         // 私密帖子仅作者本人可见（管理员/审核员可放行用于内容管理）
-        boolean isModerator = loginUser != null
-                && (AuthorityConstant.REVIEWER.equals(loginUser.getAuthorityId()) || AuthorityConstant.ADMIN.equals(loginUser.getAuthorityId()));
         if (Boolean.TRUE.equals(post.getIsPrivate())
-                && !Objects.equals(userId, post.getUserId()) && !isModerator) {
+                && !isOwner && !isModerator) {
             return Result.error(MessageConstant.POST_NOT_EXIST);
         }
         // 只有确认「这篇帖子对当前访问者可见」之后才计入兴趣分，
@@ -300,6 +397,7 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         LambdaQueryWrapper<Post> wrapper = new LambdaQueryWrapper<Post>()
                 .in(Post::getId, postIds)
                 .eq(Post::getEnabled, true)
+                .eq(Post::getStatus, "published")
                 .and(w -> w.eq(Post::getIsPrivate, false).or().isNull(Post::getIsPrivate))
                 .orderByDesc(Post::getLikeCount)
                 .orderByDesc(Post::getCreateTime);
@@ -388,6 +486,7 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
             List<Post> recentPosts = postMapper.selectList(new LambdaQueryWrapper<Post>()
                     .in(Post::getUserId, targetIds)
                     .eq(Post::getEnabled, true)
+                    .eq(Post::getStatus, "published")
                     .orderByDesc(Post::getCreateTime)
                     .last("LIMIT 50"));
             Map<Object, Double> memberScores = new HashMap<>(recentPosts.size());
@@ -413,6 +512,7 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         IPage<Post> postIPage = postMapper.selectPage(page, new LambdaQueryWrapper<Post>()
                 .eq(Post::getUserId, id)
                 .eq(Post::getEnabled, true)
+                .eq(Post::getStatus, "published")
                 .eq(!isSelf, Post::getIsPrivate, false)
                 .notIn(!hidden.isEmpty(), Post::getUserId, hidden));
         List<Post> records = postIPage.getRecords();
@@ -431,6 +531,9 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         Post post = postMapper.selectOne(new LambdaQueryWrapper<Post>().eq(Post::getUserId, userId).eq(Post::getId, id));
         if (post == null) {
             return Result.error(MessageConstant.POST_NOT_EXIST);
+        }
+        if (!"published".equals(post.getStatus())) {
+            return Result.error("草稿或定时帖子不可设置公开状态");
         }
         boolean targetPrivate = Boolean.TRUE.equals(isPrivate);
         boolean wasPrivate = Boolean.TRUE.equals(post.getIsPrivate());
@@ -686,7 +789,8 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         List<Post> eligiblePosts = new ArrayList<>();
         for (Long id : ids) {
             Post post = postMap.get(id);
-            if (post == null || !Boolean.TRUE.equals(post.getEnabled())) {
+            if (post == null || !Boolean.TRUE.equals(post.getEnabled())
+                    || !"published".equals(post.getStatus())) {
                 continue;
             }
             if (Boolean.TRUE.equals(post.getIsPrivate())) {
@@ -713,5 +817,21 @@ public class PostServiceImpl extends ServiceImpl<PostMapper, Post> implements IP
         postVOScrollResult.setOffset(newOffset);
         postVOScrollResult.setMinTime(scores.getLast().longValue());
         return postVOScrollResult;
+    }
+
+    @Override
+    public Result listFeaturedPosts(Integer pageNum, Integer pageSize) {
+        Page<Post> page = new Page<>(pageNum, pageSize);
+        Page<Post> result = postMapper.selectPage(page,
+                new LambdaQueryWrapper<Post>()
+                        .eq(Post::getIsFeatured, true)
+                        .eq(Post::getEnabled, true)
+                        .eq(Post::getStatus, "published")
+                        .eq(Post::getIsPrivate, false)
+                        .orderByDesc(Post::getCreateTime));
+        Long viewerId = userIdUtil.getUserId();
+        List<PostVO> vos = postHydrationHelper.hydrate(
+                result.getRecords(), viewerId, false, null);
+        return Result.ok(vos, result.getTotal());
     }
 }

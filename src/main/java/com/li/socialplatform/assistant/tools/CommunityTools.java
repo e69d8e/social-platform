@@ -117,7 +117,8 @@ public class CommunityTools {
             // 降级使用 MySQL
             if (posts.isEmpty()) {
                 LambdaQueryWrapper<Post> wrapper = new LambdaQueryWrapper<Post>()
-                        .eq(Post::getEnabled, true);
+                        .eq(Post::getEnabled, true)
+                        .eq(Post::getStatus, "published");
                 if (targetCategoryId != null) {
                     wrapper.eq(Post::getCategoryId, targetCategoryId);
                 }
@@ -152,6 +153,7 @@ public class CommunityTools {
             Set<Long> hidden = blacklistUtil.hiddenUserIds(userIdUtil.getUserId());
             LambdaQueryWrapper<Post> wrapper = new LambdaQueryWrapper<Post>()
                     .eq(Post::getEnabled, true)
+                    .eq(Post::getStatus, "published")
                     .notIn(!hidden.isEmpty(), Post::getUserId, hidden)
                     .orderByDesc(Post::getLikeCount)
                     .orderByDesc(Post::getViewCount)
@@ -178,7 +180,8 @@ public class CommunityTools {
 
         try {
             Post post = postMapper.selectById(postId);
-            if (post == null || Boolean.FALSE.equals(post.getEnabled())) {
+            if (post == null || Boolean.FALSE.equals(post.getEnabled())
+                    || !"published".equals(post.getStatus())) {
                 return "帖子不存在或已被屏蔽/下架。";
             }
             // 黑名单/私密帖：AI 助手也不能代读（否则成为绕过入口）

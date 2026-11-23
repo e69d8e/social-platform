@@ -19,6 +19,7 @@ import com.li.socialplatform.pojo.entity.Result;
 import com.li.socialplatform.pojo.entity.User;
 import com.li.socialplatform.pojo.vo.UserVO;
 import com.li.socialplatform.server.service.IFollowService;
+import com.li.socialplatform.server.service.INotificationService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
@@ -44,6 +45,7 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
     private final AsyncTaskUtil asyncTaskUtil;
     private final DataCacheUtil dataCacheUtil;
     private final BlacklistUtil blacklistUtil;
+    private final INotificationService notificationService;
 
     @Override
     public Result follow(Long id) {
@@ -88,6 +90,11 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
         if (increment != null) {
             asyncTaskUtil.syncUserFansCount(id, increment.intValue());
         }
+        // 关注通知
+        notificationService.sendNotification(
+                id, userId,
+                com.li.socialplatform.pojo.entity.Notification.TYPE_FOLLOW,
+                null, null, null);
         // 将要关注用户的帖子查找出来
         Set<ZSetOperations.TypedTuple<Object>> typedTuples =
                 redisUtil.zsets().rangeWithScores(KeyConstant.POST_KEY + id, 0, -1);
@@ -96,6 +103,7 @@ public class FollowServiceImpl extends ServiceImpl<FollowMapper, Follow> impleme
             List<Post> posts = postMapper.selectList(new LambdaQueryWrapper<Post>()
                     .eq(Post::getUserId, id)
                     .eq(Post::getEnabled, true)
+                    .eq(Post::getStatus, "published")
                     .orderByDesc(Post::getCreateTime)
                     .last("LIMIT 20"));
             if (!posts.isEmpty()) {

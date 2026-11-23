@@ -76,6 +76,27 @@ public class Post implements Serializable {
     @TableField("view_count")
     private Integer viewCount;
 
+    /** 帖子状态: draft/scheduled/published */
+    @Field(type = FieldType.Keyword)
+    @TableField("status")
+    private String status;
+
+    /** 定时发布时间 */
+    @TableField("publish_time")
+    private LocalDateTime publishTime;
+
+    /** 是否在个人主页置顶 */
+    @TableField("is_top")
+    private Boolean isTop;
+
+    /** 是否被官方精选 */
+    @TableField("is_featured")
+    private Boolean isFeatured;
+
+    /** 敏感等级: 0=安全 1=低风险 2=中风险 3=高风险 */
+    @TableField("is_sensitive")
+    private Integer isSensitive;
+
     /** ES 索引专用的标签 ID 列表 */
     @TableField(exist = false)
     @Field(type = FieldType.Keyword)

@@ -87,6 +87,7 @@ public class DataInitializer implements ApplicationRunner {
         List<Post> allPosts = postMapper.selectList(
                 new LambdaQueryWrapper<Post>()
                         .eq(Post::getEnabled, true)
+                        .eq(Post::getStatus, "published")
                         .and(w -> w.eq(Post::getIsPrivate, false).or().isNull(Post::getIsPrivate))
                         .orderByDesc(Post::getCreateTime));
 
@@ -150,7 +151,9 @@ public class DataInitializer implements ApplicationRunner {
 
             // 3. 自动同步帖子到 ES
             long esPostCount = postElasticsearchRepository.count();
-            List<Post> posts = postMapper.selectList(new LambdaQueryWrapper<Post>().eq(Post::getEnabled, true));
+            List<Post> posts = postMapper.selectList(new LambdaQueryWrapper<Post>()
+                    .eq(Post::getEnabled, true)
+                    .eq(Post::getStatus, "published"));
             if (esPostCount == 0 && !posts.isEmpty()) {
                 log.info("检测到 Elasticsearch 帖子数据为空，自动同步 {} 条帖子到 ES...", posts.size());
                 List<Long> postIds = posts.stream().map(Post::getId).toList();
@@ -165,6 +168,7 @@ public class DataInitializer implements ApplicationRunner {
                     ep.setCategoryId(p.getCategoryId());
                     ep.setCreateTime(p.getCreateTime());
                     ep.setEnabled(p.getEnabled());
+                    ep.setStatus(p.getStatus());
                     ep.setIsPrivate(Boolean.TRUE.equals(p.getIsPrivate()));
                     ep.setStarCount(p.getStarCount() != null ? p.getStarCount() : 0);
                     ep.setLikeCount(p.getLikeCount() != null ? p.getLikeCount() : 0);

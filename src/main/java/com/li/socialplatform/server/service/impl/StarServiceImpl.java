@@ -132,7 +132,8 @@ public class StarServiceImpl extends ServiceImpl<StarRecordMapper, StarRecord> i
         List<PostVO> postVOS = new ArrayList<>();
         for (Long postId : postIds) {
             Post post = postMap.get(postId);
-            if (post == null || !Boolean.TRUE.equals(post.getEnabled())) {
+            if (post == null || !Boolean.TRUE.equals(post.getEnabled())
+                    || !"published".equals(post.getStatus())) {
                 continue;
             }
             // 帖子后来设为私密：仅作者自己的收藏列表可见

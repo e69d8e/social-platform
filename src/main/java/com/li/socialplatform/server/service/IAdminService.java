@@ -14,4 +14,6 @@ public interface IAdminService {
     Result searchBanUser(String keyword, Integer pageNum, Integer pageSize);
 
     Result getDashboardStats(Integer days);
+
+    Result toggleFeaturePost(Long postId);
 }

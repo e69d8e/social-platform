@@ -42,4 +42,14 @@ public class PostDTO implements Serializable {
      */
     @Size(max = 5, message = "最多选择5个标签")
     private List<String> tags;
+
+    /**
+     * 发布类型: now(立即发布) / schedule(定时发布) / draft(存草稿)
+     */
+    private String publishType;
+
+    /**
+     * 定时发布时间（publishType=schedule 时必填）
+     */
+    private String publishTime;
 }

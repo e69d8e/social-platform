@@ -310,4 +310,19 @@ public class TagServiceImpl extends ServiceImpl<TagMapper, Tag> implements ITagS
                 .isHot(Boolean.TRUE.equals(tag.getIsHot()))
                 .build();
     }
+
+    @Override
+    public Map<String, Object> getTagDetail(Long tagId) {
+        Tag tag = getById(tagId);
+        if (tag == null || !Boolean.TRUE.equals(tag.getEnabled())) {
+            return Map.of("error", "标签不存在");
+        }
+        Map<String, Object> result = new HashMap<>();
+        result.put("tag", toVO(tag));
+        // 帖子数
+        Long postCount = postTagMapper.selectCount(
+                new LambdaQueryWrapper<PostTag>().eq(PostTag::getTagId, tagId));
+        result.put("postCount", postCount);
+        return result;
+    }
 }

@@ -65,4 +65,9 @@ public interface ITagService extends IService<Tag> {
      * 清理热门标签缓存
      */
     void evictHotTagCache();
+
+    /**
+     * 获取标签详情（标签信息 + 帖子数 + 最新帖子）
+     */
+    Map<String, Object> getTagDetail(Long tagId);
 }

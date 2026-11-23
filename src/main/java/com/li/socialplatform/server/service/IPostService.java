@@ -8,6 +8,8 @@ import com.li.socialplatform.pojo.entity.Result;
 public interface IPostService extends IService<Post> {
     Result publishPost(PostDTO postDTO);
 
+    Result publishDraft(Long id);
+
     Result getPost(Long id);
 
     Result listPosts(Long lastId, Integer offset);
@@ -29,4 +31,6 @@ public interface IPostService extends IService<Post> {
     Result recordView(Long postId);
 
     Result migratePostListToHomePost();
+
+    Result listFeaturedPosts(Integer pageNum, Integer pageSize);
 }

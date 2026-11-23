@@ -10,6 +10,7 @@ import com.li.socialplatform.common.constant.MessageConstant;
 import com.li.socialplatform.common.properties.SystemConstants;
 import com.li.socialplatform.common.utils.BlacklistUtil;
 import com.li.socialplatform.common.utils.RedisUtil;
+import com.li.socialplatform.common.utils.SensitiveWordUtil;
 import com.li.socialplatform.common.utils.UserIdUtil;
 import com.li.socialplatform.common.utils.UserIntersetScoreUtil;
 import com.li.socialplatform.server.mapper.CommentMapper;
@@ -23,6 +24,7 @@ import com.li.socialplatform.pojo.vo.CommentUserVO;
 import com.li.socialplatform.pojo.vo.CommentVO;
 import com.li.socialplatform.server.repository.PostElasticsearchRepository;
 import com.li.socialplatform.server.service.ICommentService;
+import com.li.socialplatform.server.service.INotificationService;
 import com.li.socialplatform.server.service.ITagService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -53,11 +55,18 @@ public class CommentServiceImpl extends ServiceImpl<CommentMapper, Comment> impl
     private final BlacklistUtil blacklistUtil;
     private final ITagService tagService;
     private final PostElasticsearchRepository postElasticsearchRepository;
+    private final INotificationService notificationService;
+    private final SensitiveWordUtil sensitiveWordUtil;
 
     @Transactional
     @Override
     public Result addComment(CommentDTO commentDTO) {
         log.info(commentDTO.toString());
+        // 敏感词检测
+        int riskLevel = sensitiveWordUtil.checkRiskLevel(commentDTO.getContent());
+        if (riskLevel >= 3) {
+            return Result.error("评论包含违规信息，请修改后重试");
+        }
         Comment comment = BeanUtil.copyProperties(commentDTO, Comment.class);
         Long userId = userIdUtil.getUserId();
         User user = userMapper.selectById(userId);
@@ -105,6 +114,24 @@ public class CommentServiceImpl extends ServiceImpl<CommentMapper, Comment> impl
             } catch (Exception e) {
                 log.warn("同步评论数到 ES 失败: postId={}, error={}", post.getId(), e.getMessage());
             }
+            // 发送互动通知
+            String commentSnippet = comment.getContent() != null && comment.getContent().length() > 80
+                    ? comment.getContent().substring(0, 80) : comment.getContent();
+            if (comment.getReplyTo() != null) {
+                // 回复通知：通知被回复的评论作者
+                Comment parentComment = commentMapper.selectById(comment.getReplyTo());
+                if (parentComment != null) {
+                    notificationService.sendNotification(
+                            parentComment.getUserId(), userId,
+                            Notification.TYPE_REPLY,
+                            comment.getPostId(), comment.getId(), commentSnippet);
+                }
+            }
+            // 评论通知：通知帖子作者
+            notificationService.sendNotification(
+                    post.getUserId(), userId,
+                    Notification.TYPE_COMMENT,
+                    comment.getPostId(), comment.getId(), commentSnippet);
         }
         return Result.ok(MessageConstant.ADD_COMMENT_SUCCESS, "");
     }

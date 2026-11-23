@@ -48,4 +48,18 @@ public class TagController {
             @Parameter(description = "每页数量") @RequestParam(defaultValue = "8") @Min(1) @Max(100) Integer pageSize) {
         return postService.listPostsByTag(tagId, tagName, pageNum, pageSize);
     }
+
+    @GetMapping("/detail/{id}")
+    @Operation(summary = "标签详情", description = "获取标签信息、帖子数和最新帖子")
+    public Result tagDetail(@PathVariable Long id) {
+        return Result.ok(tagService.getTagDetail(id));
+    }
+
+    @GetMapping("/featured")
+    @Operation(summary = "每周精选帖子", description = "获取被官方精选的帖子列表")
+    public Result featuredPosts(
+            @Parameter(description = "页码") @RequestParam(defaultValue = "1") @Min(1) Integer pageNum,
+            @Parameter(description = "每页数量") @RequestParam(defaultValue = "10") @Min(1) @Max(50) Integer pageSize) {
+        return postService.listFeaturedPosts(pageNum, pageSize);
+    }
 }

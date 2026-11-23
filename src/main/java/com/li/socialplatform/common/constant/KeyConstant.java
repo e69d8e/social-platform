@@ -11,6 +11,7 @@ public class KeyConstant {
     public static final String COMMENT_KEY = "comment:";
     public static final String LIKE_KEY = "like:";
     public static final String SIGN_IN_KEY = "sign-in:";
+    public static final String PROFILE_VISIT_KEY = "profile-visit:";
     public static final String Follow_LIST_KEY = "follow-list:";
     public static final String POST_KEY = "post:";
     public static final String LIKE_COUNT = "like-count:";
@@ -40,6 +41,8 @@ public class KeyConstant {
     public static final String SLIDE_CAPTCHA_KEY = "slide:captcha:";
     public static final String SLIDE_VERIFY_KEY = "slide:verify:";
     public static final String USER_ROLE_KEY = "user-role:";
+    /** 互动通知未读数 */
+    public static final String NOTIFICATION_UNREAD_KEY = "notification-unread:";
 
     // ==================== 用户黑名单（用户级拉黑，区别于管理员 ban_record） ====================
 

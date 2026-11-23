@@ -165,8 +165,10 @@ public class HomeFeedService {
                 }
 
                 Post post = postMap.get(pid);
-                if (post == null || !Boolean.TRUE.equals(post.getEnabled()) || Boolean.TRUE.equals(post.getIsPrivate())) {
-                    // 从首页时间流移除失效/私密帖，保持后续干净
+                if (post == null || !Boolean.TRUE.equals(post.getEnabled())
+                        || Boolean.TRUE.equals(post.getIsPrivate())
+                        || !"published".equals(post.getStatus())) {
+                    // 从首页时间流移除失效/私密/未发布帖，保持后续干净
                     redisUtil.zsets().remove(homePostKey, pid);
                     continue;
                 }
@@ -223,7 +225,9 @@ public class HomeFeedService {
         if (!homePosts.isEmpty()) {
             List<Long> postIds = homePosts.stream().map(HomePost::getPostId).distinct().toList();
             Map<Long, Post> validPosts = postMapper.selectBatchIds(postIds).stream()
-                    .filter(p -> Boolean.TRUE.equals(p.getEnabled()) && !Boolean.TRUE.equals(p.getIsPrivate()))
+                    .filter(p -> Boolean.TRUE.equals(p.getEnabled())
+                            && !Boolean.TRUE.equals(p.getIsPrivate())
+                            && "published".equals(p.getStatus()))
                     .collect(Collectors.toMap(Post::getId, p -> p));
             Map<Object, Double> memberScores = new HashMap<>();
             for (HomePost hp : homePosts) {
@@ -241,6 +245,7 @@ public class HomeFeedService {
 
         List<Post> publicPosts = postMapper.selectList(new LambdaQueryWrapper<Post>()
                 .eq(Post::getEnabled, true)
+                .eq(Post::getStatus, "published")
                 .and(w -> w.eq(Post::getIsPrivate, false).or().isNull(Post::getIsPrivate))
                 .orderByDesc(Post::getCreateTime)
                 .last("LIMIT 300"));
@@ -322,7 +327,9 @@ public class HomeFeedService {
             for (RankedPostEntry entry : window) {
                 cursor++;
                 Post post = postMap.get(entry.getPostId());
-                if (post == null || !Boolean.TRUE.equals(post.getEnabled()) || Boolean.TRUE.equals(post.getIsPrivate())) {
+                if (post == null || !Boolean.TRUE.equals(post.getEnabled())
+                        || Boolean.TRUE.equals(post.getIsPrivate())
+                        || !"published".equals(post.getStatus())) {
                     continue;
                 }
                 User author = authorMap.get(post.getUserId());
@@ -397,6 +404,9 @@ public class HomeFeedService {
 
         List<CandidatePost> candidates = new ArrayList<>(canonicalPosts.size());
         for (Post post : canonicalPosts) {
+            if (!"published".equals(post.getStatus())) {
+                continue;
+            }
             User author = authorMap.get(post.getUserId());
             boolean authorEnabled = author != null && Boolean.TRUE.equals(author.getEnabled());
             List<TagVO> postTags = tagMap.getOrDefault(post.getId(), List.of());
@@ -469,6 +479,7 @@ public class HomeFeedService {
             if (!topCatIds.isEmpty()) {
                 postMapper.selectList(new LambdaQueryWrapper<Post>()
                                 .eq(Post::getEnabled, true)
+                                .eq(Post::getStatus, "published")
                                 .and(w -> w.eq(Post::getIsPrivate, false).or().isNull(Post::getIsPrivate))
                                 .in(Post::getCategoryId, topCatIds)
                                 .orderByDesc(Post::getLikeCount)
@@ -485,6 +496,7 @@ public class HomeFeedService {
         List<Long> subset = followedUserIds.stream().limit(50).toList();
         postMapper.selectList(new LambdaQueryWrapper<Post>()
                         .eq(Post::getEnabled, true)
+                        .eq(Post::getStatus, "published")
                         .and(w -> w.eq(Post::getIsPrivate, false).or().isNull(Post::getIsPrivate))
                         .in(Post::getUserId, subset)
                         .orderByDesc(Post::getCreateTime)
@@ -515,6 +527,7 @@ public class HomeFeedService {
 
         postMapper.selectList(new LambdaQueryWrapper<Post>()
                         .eq(Post::getEnabled, true)
+                        .eq(Post::getStatus, "published")
                         .and(w -> w.eq(Post::getIsPrivate, false).or().isNull(Post::getIsPrivate))
                         .orderByDesc(Post::getLikeCount)
                         .orderByDesc(Post::getViewCount)
@@ -525,6 +538,7 @@ public class HomeFeedService {
     private void recallFreshPool(Map<Long, Post> mergedPosts, int limit) {
         postMapper.selectList(new LambdaQueryWrapper<Post>()
                         .eq(Post::getEnabled, true)
+                        .eq(Post::getStatus, "published")
                         .and(w -> w.eq(Post::getIsPrivate, false).or().isNull(Post::getIsPrivate))
                         .orderByDesc(Post::getCreateTime)
                         .last("LIMIT " + limit))

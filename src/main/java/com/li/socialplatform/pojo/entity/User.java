@@ -86,4 +86,10 @@ public class User implements Serializable {
     @Field(type = FieldType.Integer)
     @TableField(value = "fans_count")
     private Integer fansCount; // 粉丝数
+
+    @TableField(value = "credit_score")
+    private Integer creditScore; // 信用分 (0-100)
+
+    @TableField(value = "badge")
+    private String badge; // 徽章: none/verified/creator/star
 }

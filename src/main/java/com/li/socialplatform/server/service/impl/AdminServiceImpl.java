@@ -11,7 +11,10 @@ import com.li.socialplatform.pojo.entity.User;
 import com.li.socialplatform.pojo.vo.ChartItemVO;
 import com.li.socialplatform.pojo.vo.DashboardSummaryVO;
 import com.li.socialplatform.pojo.vo.UserVO;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.li.socialplatform.pojo.entity.Post;
 import com.li.socialplatform.server.mapper.DashboardMapper;
+import com.li.socialplatform.server.mapper.PostMapper;
 import com.li.socialplatform.server.mapper.UserMapper;
 import com.li.socialplatform.server.repository.UserElasticsearchRepository;
 import com.li.socialplatform.server.service.IAdminService;
@@ -48,6 +51,7 @@ public class AdminServiceImpl implements IAdminService {
     private final UserElasticsearchRepository userElasticsearchRepository;
     private final DashboardMapper dashboardMapper;
     private final ElasticsearchOperations elasticsearchOperations;
+    private final PostMapper postMapper;
 
     @Transactional
     @Override
@@ -266,5 +270,18 @@ public class AdminServiceImpl implements IAdminService {
         int weekBasedYear = date.get(WeekFields.ISO.weekBasedYear());
         int week = date.get(WeekFields.ISO.weekOfWeekBasedYear());
         return String.format("%d-W%02d", weekBasedYear, week);
+    }
+
+    @Override
+    public Result toggleFeaturePost(Long postId) {
+        Post post = postMapper.selectById(postId);
+        if (post == null) {
+            return Result.error("帖子不存在");
+        }
+        boolean newFeatured = !Boolean.TRUE.equals(post.getIsFeatured());
+        postMapper.update(null, new LambdaUpdateWrapper<Post>()
+                .eq(Post::getId, postId)
+                .set(Post::getIsFeatured, newFeatured));
+        return Result.ok(newFeatured ? "已设为精选" : "已取消精选");
     }
 }

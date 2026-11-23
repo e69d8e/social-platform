@@ -27,6 +27,11 @@ public class PostDetailVO implements Serializable {
     private List<TagVO> tags;
     @JsonFormat(pattern = "yyyy-MM-dd HH:mm:ss")
     private LocalDateTime createTime;
+
+    private String status;
+
+    @JsonFormat(pattern = "yyyy-MM-dd'T'HH:mm")
+    private LocalDateTime publishTime;
     private Boolean liked;
     private Integer likeCount;
     private Boolean starred;
